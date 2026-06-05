@@ -954,10 +954,12 @@ async function handleResponsesApi(body, res) {
 	let isScenarioRequest = false;
 	/** @type {string[]} */
 	let requestToolNames = [];
+	/** @type {any[]} */
+	let input = [];
 	try {
 		const parsed = JSON.parse(body);
 		// Responses API uses `input` array and `tools` array
-		const input = parsed.input || [];
+		input = parsed.input || [];
 		const tools = parsed.tools || [];
 		requestToolNames = tools.map((/** @type {any} */ t) => t.name).filter(Boolean);
 
@@ -991,10 +993,30 @@ async function handleResponsesApi(body, res) {
 		'X-Request-Id': 'perf-benchmark-' + Date.now(),
 	});
 
-	// For multi-turn tool-call scenarios, convert to Responses API tool_use format
+	// Multi-turn scenarios — mirror the chat-completions / Anthropic handlers.
+	// Only triggers when the request actually has tools so ancillary requests
+	// (title generation etc.) fall through to a plain content turn.
 	if (isMultiTurnScenario(scenario) && requestToolNames.length > 0) {
-		// For now, fall back to content-only for Responses API
-		// (tool calls would need response.output_item with type: 'function_call')
+		const { turn, turnIndex } = resolveCurrentResponsesApiTurn(scenario.turns, input);
+		const modelTurnCount = scenario.turns.filter(t => t.kind !== 'user').length;
+		const ts = new Date().toISOString().slice(11, -1);
+		_log(`[mock-llm]   ${ts} → responses-api multi-turn ${scenarioId}, model turn ${turnIndex + 1}/${modelTurnCount} (${turn.kind})`);
+
+		if (turn.kind === 'tool-calls') {
+			await streamResponsesApiToolCalls(res, turn.toolCalls, requestToolNames, scenarioId, isScenarioRequest);
+			return;
+		}
+
+		if (turn.kind === 'echo-last-message') {
+			const lastItem = input[input.length - 1];
+			const payload = '```json\n' + JSON.stringify(lastItem ?? null, null, 2) + '\n```';
+			await streamResponsesContent(res, [{ content: payload, delayMs: 0 }], isScenarioRequest);
+			return;
+		}
+
+		// content / thinking — stream the chunks as text
+		await streamResponsesContent(res, turn.chunks, isScenarioRequest);
+		return;
 	}
 
 	// Resolve content chunks
@@ -1003,6 +1025,186 @@ async function handleResponsesApi(body, res) {
 		: /** @type {StreamChunk[]} */ (scenario);
 
 	await streamResponsesContent(res, chunks, isScenarioRequest);
+}
+
+/**
+ * Count completed assistant turns in a Responses API `input` array, after the
+ * last user message carrying a `[scenario:X]` tag. Consecutive assistant
+ * output items (`role === 'assistant'` messages or `type === 'function_call'`
+ * items) are grouped into a single turn so multi-tool-call turns count once.
+ *
+ * @param {any[]} input
+ * @returns {number}
+ */
+function countCompletedResponsesApiModelTurns(input) {
+	let scenarioIdx = -1;
+	for (let i = input.length - 1; i >= 0; i--) {
+		const item = input[i];
+		if (item.role !== 'user') { continue; }
+		const content = typeof item.content === 'string'
+			? item.content
+			: Array.isArray(item.content)
+				? item.content.map((/** @type {any} */ c) => c.text || '').join('')
+				: '';
+		if (/\[scenario:[^\]]+\]/.test(content)) {
+			scenarioIdx = i;
+			break;
+		}
+	}
+
+	let turns = 0;
+	let inAssistantBlock = false;
+	const startIdx = scenarioIdx >= 0 ? scenarioIdx + 1 : 0;
+	for (let i = startIdx; i < input.length; i++) {
+		const item = input[i];
+		const isAssistantOutput = item.role === 'assistant' || item.type === 'function_call';
+		if (isAssistantOutput) {
+			if (!inAssistantBlock) {
+				turns++;
+				inAssistantBlock = true;
+			}
+		} else {
+			inAssistantBlock = false;
+		}
+	}
+	return turns;
+}
+
+/**
+ * Responses API equivalent of `resolveCurrentTurn`.
+ *
+ * @param {ScenarioTurn[]} turns
+ * @param {any[]} input
+ * @returns {{ turn: ModelScenarioTurn, turnIndex: number }}
+ */
+function resolveCurrentResponsesApiTurn(turns, input) {
+	const completedModelTurns = countCompletedResponsesApiModelTurns(input);
+	const modelTurns = /** @type {ModelScenarioTurn[]} */ (turns.filter(t => t.kind !== 'user'));
+	const idx = Math.min(completedModelTurns, modelTurns.length - 1);
+	return { turn: modelTurns[idx], turnIndex: idx };
+}
+
+/**
+ * Stream tool calls as Responses API SSE events. Emits one
+ * `function_call` output item per requested tool call.
+ *
+ * @param {http.ServerResponse} res
+ * @param {Array<{ toolNamePattern: RegExp, arguments: Record<string, any> }>} toolCalls
+ * @param {string[]} requestToolNames
+ * @param {string} scenarioId
+ * @param {boolean} isScenarioRequest
+ */
+async function streamResponsesApiToolCalls(res, toolCalls, requestToolNames, scenarioId, isScenarioRequest) {
+	const responseId = `resp_mock_${Date.now()}`;
+	const model = 'gpt-5.3-codex';
+	let sequenceNumber = 0;
+	const nextSeq = () => sequenceNumber++;
+
+	const skeleton = {
+		id: responseId,
+		object: 'response',
+		created_at: Math.floor(Date.now() / 1000),
+		model,
+		status: 'in_progress',
+		output: [],
+		usage: null,
+	};
+
+	res.write(`event: response.created\ndata: ${JSON.stringify({
+		type: 'response.created',
+		sequence_number: nextSeq(),
+		response: skeleton,
+	})}\n\n`);
+
+	res.write(`event: response.in_progress\ndata: ${JSON.stringify({
+		type: 'response.in_progress',
+		sequence_number: nextSeq(),
+		response: skeleton,
+	})}\n\n`);
+
+	/** @type {any[]} */
+	const finalOutput = [];
+
+	for (let i = 0; i < toolCalls.length; i++) {
+		const call = toolCalls[i];
+		let toolName = requestToolNames.find(name => call.toolNamePattern.test(name));
+		if (!toolName) {
+			toolName = call.toolNamePattern.source.replace(/[\\.|?*+^${}()\[\]]/g, '');
+			_log(`[mock-llm]   No matching tool for pattern ${call.toolNamePattern}, using fallback: ${toolName}`);
+		}
+
+		const callId = `call_${scenarioId}_${i}_${Date.now()}`;
+		const itemId = `fc_${callId}`;
+		const argsJson = JSON.stringify(call.arguments);
+
+		const item = {
+			id: itemId,
+			type: 'function_call',
+			status: 'in_progress',
+			call_id: callId,
+			name: toolName,
+			arguments: '',
+		};
+
+		res.write(`event: response.output_item.added\ndata: ${JSON.stringify({
+			type: 'response.output_item.added',
+			sequence_number: nextSeq(),
+			output_index: i,
+			item,
+		})}\n\n`);
+
+		res.write(`event: response.function_call_arguments.delta\ndata: ${JSON.stringify({
+			type: 'response.function_call_arguments.delta',
+			sequence_number: nextSeq(),
+			item_id: itemId,
+			output_index: i,
+			delta: argsJson,
+		})}\n\n`);
+
+		res.write(`event: response.function_call_arguments.done\ndata: ${JSON.stringify({
+			type: 'response.function_call_arguments.done',
+			sequence_number: nextSeq(),
+			item_id: itemId,
+			output_index: i,
+			arguments: argsJson,
+		})}\n\n`);
+
+		const doneItem = { ...item, status: 'completed', arguments: argsJson };
+		finalOutput.push(doneItem);
+
+		res.write(`event: response.output_item.done\ndata: ${JSON.stringify({
+			type: 'response.output_item.done',
+			sequence_number: nextSeq(),
+			output_index: i,
+			item: doneItem,
+		})}\n\n`);
+	}
+
+	res.write(`event: response.completed\ndata: ${JSON.stringify({
+		type: 'response.completed',
+		sequence_number: nextSeq(),
+		response: {
+			id: responseId,
+			object: 'response',
+			created_at: Math.floor(Date.now() / 1000),
+			model,
+			status: 'completed',
+			output: finalOutput,
+			usage: {
+				input_tokens: 100,
+				output_tokens: 1,
+				total_tokens: 101,
+				input_tokens_details: { cached_tokens: 0 },
+				output_tokens_details: { reasoning_tokens: 0 },
+			},
+		},
+	})}\n\n`);
+
+	res.end();
+
+	if (isScenarioRequest) {
+		serverEvents.emit('scenarioCompletion');
+	}
 }
 
 /**

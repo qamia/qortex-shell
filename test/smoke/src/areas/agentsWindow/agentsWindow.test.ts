@@ -30,6 +30,9 @@ const CLAUDE_REPLY = 'MOCKED_CLAUDE_RESPONSE';
 const AGENT_HOST_SCENARIO_ID = 'smoke-hello-agent-host';
 const AGENT_HOST_REPLY = 'MOCKED_AGENT_HOST_RESPONSE';
 
+const AGENT_HOST_SANDBOX_SCENARIO_ID = 'smoke-hello-agent-host-sandbox';
+const AGENT_HOST_SANDBOX_REPLY = 'MOCKED_AGENT_HOST_SANDBOX_RESPONSE';
+
 export function setup(logger: Logger) {
 
 	describe('Agents Window', () => {
@@ -139,7 +142,7 @@ export function setup(logger: Logger) {
 			);
 		});
 
-		it.skip('Test Copilot CLI session (sandbox)', async function () {
+		it('Test Copilot CLI session (sandbox)', async function () {
 			// Sandbox-backed shell tool currently only runs cleanly on macOS
 			// in CI. On Linux the bubblewrap policy fails to start bash inside
 			// the sandbox; on Windows AppContainer cold-start usually exceeds
@@ -253,8 +256,23 @@ export function setup(logger: Logger) {
 
 			registerScenario('text-only', new ScenarioBuilder().emit('OK').build());
 			registerScenario(AGENT_HOST_SCENARIO_ID, new ScenarioBuilder().emit(AGENT_HOST_REPLY).build());
+			registerScenario(AGENT_HOST_SANDBOX_SCENARIO_ID, {
+				type: 'multi-turn',
+				turns: [
+					{
+						kind: 'tool-calls',
+						toolCalls: [
+							{
+								toolNamePattern: /^(bash|pwsh|powershell)$/i,
+								arguments: { command: `echo ${AGENT_HOST_SANDBOX_REPLY}` },
+							},
+						],
+					},
+					{ kind: 'echo-last-message' },
+				],
+			});
 
-			mockServer = await startServer(0, { logger: (msg: string) => logger.log(msg) });
+			mockServer = await startServer(0, { logger: (msg: string) => logger.log(msg), verbose: true });
 			logger.log(`Mock LLM server (AgentHost) started at ${mockServer.url}`);
 		});
 
@@ -290,6 +308,11 @@ export function setup(logger: Logger) {
 					'chat.agentHost.enabled': true,
 					'chat.agentHost.ahpJsonlLoggingEnabled': true,
 					'chat.agentHost.unsafeTestToken': 'smoketest-fake-agent-host-token',
+					// AgentHost-side sandbox: customTerminalTool gates the AgentHost’s own
+					// shell tools (which honor chat.agent.sandbox.*), and chat.agent.sandbox.enabled
+					// turns the sandbox on for the auto-approve path used by the sandbox test.
+					'chat.agentHost.customTerminalTool.enabled': true,
+					'chat.agent.sandbox.enabled': 'on',
 				}, null, 2);
 				for (const settingsPath of [
 					path.join(userDataDir, 'User', 'settings.json'),
@@ -357,6 +380,47 @@ export function setup(logger: Logger) {
 			assert.ok(
 				ahpFrames.includes('"type":"session/turnStarted"'),
 				`expected the AgentHost process to have received a session/turnStarted dispatchAction (checked ${ahpEntries.length} jsonl files under ${ahpLogDir}); if missing, the renderer-side extension likely served the reply instead`
+			);
+		});
+
+		it('Test Copilot CLI session via AgentHost (sandbox)', async function () {
+			// See the Copilot CLI sandbox test above for the rationale on
+			// platform gating and where to find logs when debugging CI runs.
+			// The AgentHost-side sandbox log we assert on is
+			// `<logsPath>/agenthost.log` (the utility-process log), produced by
+			// CopilotAgentSession when it auto-approves a sandboxed shell call.
+			// if (process.platform !== 'darwin') {
+			// 	this.skip();
+			// }
+
+			this.timeout(5 * 60 * 1000);
+
+			const app = this.app as Application;
+
+			await app.workbench.agentsWindow.startNewSession();
+			await app.workbench.agentsWindow.waitForNewSessionView();
+			await app.workbench.agentsWindow.selectSessionType('Local Agent Host');
+
+			const requestsBefore = mockServer.requestCount();
+			await app.workbench.agentsWindow.submitNewSessionPrompt(`hello world [scenario:${AGENT_HOST_SANDBOX_SCENARIO_ID}]`);
+
+			const text = await app.workbench.agentsWindow.waitForAssistantText(AGENT_HOST_SANDBOX_REPLY, 120_000);
+			logger.log(`Agents Window (AgentHost sandbox) response: ${text}`);
+
+			assert.ok(
+				mockServer.requestCount() > requestsBefore,
+				'expected the mock LLM server to have received a new request from the AgentHost sandbox session'
+			);
+
+			// Confirm the shell tool was auto-approved on the AgentHost-side
+			// sandbox path (gated by chat.agentHost.customTerminalTool.enabled
+			// + chat.agent.sandbox.enabled, both seeded above).
+			const agentHostLogPath = path.join(logsPath, 'agenthost.log');
+			const agentHostLog = await fs.promises.readFile(agentHostLogPath, 'utf8');
+			assert.match(
+				agentHostLog,
+				/\[Copilot:[^\]]+\] Auto-approving sandboxed shell command for tool call /,
+				`expected an "Auto-approving sandboxed shell command" entry in ${agentHostLogPath}`
 			);
 		});
 	});
