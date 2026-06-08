@@ -1,3 +1,19 @@
+<!--
+  Qortex — a fork of Code-OSS (MIT) by Qamia.
+  This shell is microsoft/vscode pinned at tag 1.123.0 and rebranded to "Qortex"
+  via product.json (Linear QAM-488). Upstream remains tracked as `upstream` for
+  periodic rebase (QAM-491). The original Code-OSS README and MIT LICENSE.txt are
+  retained below/alongside as required.
+-->
+
+# Qortex (Code-OSS fork)
+
+> Branded editor shell for **Qortex**, forked from **Code-OSS (MIT)** at upstream
+> tag `1.123.0`. Branding lives in [`product.json`](product.json). See the
+> original Code-OSS README content below for build/contribute references.
+
+---
+
 # Visual Studio Code - Open Source ("Code - OSS")
 [![Feature Requests](https://img.shields.io/github/issues/microsoft/vscode/feature-request.svg)](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc)
 [![Bugs](https://img.shields.io/github/issues/microsoft/vscode/bug.svg)](https://github.com/microsoft/vscode/issues?utf8=✓&q=is%3Aissue+is%3Aopen+label%3Abug)
