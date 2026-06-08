@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { CopilotClient, ResumeSessionConfig, RuntimeConnection, type CopilotClientOptions, type SessionConfig } from '@github/copilot-sdk';
+import { CopilotClient, ResumeSessionConfig, RuntimeConnection, type CopilotClientOptions, type CopilotSession, type SessionConfig } from '@github/copilot-sdk';
 import * as fs from 'fs/promises';
 import { Limiter, SequencerByKey, Throttler } from '../../../../base/common/async.js';
 import { CancellationTokenSource, type CancellationToken } from '../../../../base/common/cancellation.js';
@@ -46,7 +46,9 @@ import { CopilotAgentSession, SessionWrapperFactory, type CopilotSdkMode, type I
 import { ICopilotSessionContext, projectFromCopilotContext } from './copilotGitProject.js';
 import { parsedPluginsEqual, toChildCustomizations, toSdkCustomAgents, toSdkHooks, toSdkInstructionDirectories, toSdkMcpServers, toSdkSkillDirectories } from './copilotPluginConverters.js';
 import { CopilotSessionWrapper } from './copilotSessionWrapper.js';
+import { buildSandboxConfigForSdk, type ISdkSandboxConfig } from './sandboxConfigForSdk.js';
 import { ShellManager, createShellTools } from './copilotShellTools.js';
+import { AgentHostSandboxConfigKey, sandboxConfigSchema } from '../../common/sandboxConfigSchema.js';
 import { DiscoveredType, SessionCustomizationDiscovery, type IDiscoveredDirectory } from './sessionCustomizationDiscovery.js';
 import { SessionPluginBundler } from '../shared/sessionPluginBundler.js';
 import { CopilotSlashCommandCompletionProvider } from './copilotSlashCommandCompletionProvider.js';
@@ -954,6 +956,7 @@ export class CopilotAgent extends Disposable implements IAgent {
 
 		const factory: SessionWrapperFactory = async callbacks => {
 			const resolvedAgentName = provisional.agent ? await this._resolveAgentName(provisional.sessionUri, snapshot, provisional.agent) : undefined;
+			const { resume, sandboxConfig } = await sessionConfigBuilder(callbacks);
 			const raw = await client.createSession({
 				model: provisional.model?.id,
 				reasoningEffort: this._getReasoningEffort(provisional.model),
@@ -961,8 +964,9 @@ export class CopilotAgent extends Disposable implements IAgent {
 				sessionId,
 				streaming: true,
 				workingDirectory: workingDirectory?.fsPath,
-				...await sessionConfigBuilder(callbacks),
+				...resume,
 			});
+			await this._applySandboxConfig(raw, sandboxConfig, sessionId);
 			return new CopilotSessionWrapper(raw);
 		};
 
@@ -1559,18 +1563,36 @@ export class CopilotAgent extends Disposable implements IAgent {
 	 * Returns an async function that resolves the final config given the
 	 * session's permission/hook callbacks, so it can be called lazily
 	 * inside the {@link SessionWrapperFactory}.
+	 *
+	 * The closure resolves to both:
+	 *   - `resume`: the {@link ResumeSessionConfig} (and `SessionConfig` superset)
+	 *     consumed by `client.createSession` / `client.resumeSession`.
+	 *   - `sandboxConfig`: when the AgentHost is delegating shell execution to
+	 *     the SDK (i.e. {@link AgentHostConfigKey.EnableCustomTerminalTool} is
+	 *     OFF), the SDK-shaped sandbox policy derived from the host's
+	 *     `chat.agent.sandbox.*` config bag. Callers should forward it via
+	 *     `session.rpc.options.update({ sandboxConfig })` so the SDK's built-in
+	 *     shell tool wraps commands in mxc — mirroring what
+	 *     `buildSandboxConfigForCLI` does for the Copilot extension's CLI path.
 	 */
-	private _buildSessionConfig(snapshot: IActiveClientSnapshot, shellManager: ShellManager, workingDirectory: URI | undefined): (args: Parameters<SessionWrapperFactory>[0]) => Promise<ResumeSessionConfig> {
+	private _buildSessionConfig(snapshot: IActiveClientSnapshot, shellManager: ShellManager, workingDirectory: URI | undefined): (args: Parameters<SessionWrapperFactory>[0]) => Promise<{ resume: ResumeSessionConfig; sandboxConfig: ISdkSandboxConfig | undefined }> {
 		const plugins = snapshot.plugins;
 
 		return async (callbacks: Parameters<SessionWrapperFactory>[0]) => {
 			const enableCustomTerminalTool = this._configurationService.getRootValue(agentHostCustomizationConfigSchema, AgentHostConfigKey.EnableCustomTerminalTool) === true;
 			const shellTools = enableCustomTerminalTool ? await createShellTools(shellManager, this._terminalManager, this._logService, callbacks.requestUnsandboxedCommandConfirmation) : [];
+			// When the AgentHost is NOT providing its own shell tools, the SDK
+			// runs commands through its built-in shell — push the sandbox
+			// policy into the SDK via `session.options.update` (applied at the
+			// factory call sites below) so commands are still mxc-wrapped.
+			const sandboxConfig = enableCustomTerminalTool
+				? undefined
+				: buildSandboxConfigForSdk(process.platform, this._configurationService.getRootValue(sandboxConfigSchema, AgentHostSandboxConfigKey.Sandbox));
 			// Rely on SDK to find all agents/skills & the like from the plugins instead of us feeding them.
 			// Else we could end up with duplicates or the like.
 			const pluginsWithoutDirs = plugins.filter(p => !p.pluginDir || p.pluginDir.scheme !== Schemas.file);
 			const customAgents = await toSdkCustomAgents(pluginsWithoutDirs.flatMap(p => p.agents), this._fileService);
-			return {
+			const resume: ResumeSessionConfig = {
 				clientName: 'vscode',
 				onPermissionRequest: callbacks.onPermissionRequest,
 				onUserInputRequest: callbacks.onUserInputRequest,
@@ -1606,7 +1628,34 @@ export class CopilotAgent extends Disposable implements IAgent {
 				// events. Without this, sessions default to "off".
 				remoteSession: this._isSessionSyncEnabled() ? 'export' : undefined,
 			};
+			return { resume, sandboxConfig };
 		};
+	}
+
+	/**
+	 * Forward the SDK-shaped sandbox policy to the runtime via
+	 * `session.options.update`, immediately after the session is created or
+	 * resumed. The SDK doesn't expose `sandboxConfig` on its public
+	 * `SessionConfig` / `ResumeSessionConfig` typed surface, but the
+	 * underlying `SessionUpdateOptionsParams` does — so this update is the
+	 * supported way to push the policy down for the built-in shell tool.
+	 *
+	 * No-op when {@link AgentHostConfigKey.EnableCustomTerminalTool} is ON
+	 * (the AgentHost wraps commands itself via the host terminal sandbox
+	 * engine) or when the host sandbox config evaluates to disabled.
+	 */
+	private async _applySandboxConfig(session: CopilotSession, sandboxConfig: ISdkSandboxConfig | undefined, sessionId: string): Promise<void> {
+		if (!sandboxConfig) {
+			return;
+		}
+		try {
+			// The SDK types `sandboxConfig` as an opaque `{ [k: string]: unknown }`
+			// bag; cast our concrete shape to satisfy the index signature.
+			await session.rpc.options.update({ sandboxConfig: sandboxConfig as unknown as Record<string, unknown> });
+			this._logService.info(`[Copilot:${sessionId}] Applied SDK sandboxConfig via session.options.update`);
+		} catch (err) {
+			this._logService.warn(`[Copilot:${sessionId}] Failed to apply SDK sandboxConfig`, err);
+		}
 	}
 
 	protected _resumeSession(sessionId: string): Promise<CopilotAgentSession> {
@@ -1650,16 +1699,17 @@ export class CopilotAgent extends Disposable implements IAgent {
 		const sessionConfig = this._buildSessionConfig(snapshot, shellManager, workingDirectory);
 
 		const factory: SessionWrapperFactory = async callbacks => {
-			const config = await sessionConfig(callbacks);
+			const { resume, sandboxConfig } = await sessionConfig(callbacks);
 			const resolvedAgentName = storedMetadata.agent ? await this._resolveAgentName(sessionUri, snapshot, storedMetadata.agent) : undefined;
 			try {
 				this._logService.info(`[Copilot:${sessionId}] Calling SDK resumeSession...`);
 				const raw = await client.resumeSession(sessionId, {
-					...config,
+					...resume,
 					workingDirectory: workingDirectory?.fsPath,
 					...(resolvedAgentName ? { agent: resolvedAgentName } : {}),
 				});
 				this._logService.info(`[Copilot:${sessionId}] SDK resumeSession succeeded`);
+				await this._applySandboxConfig(raw, sandboxConfig, sessionId);
 				return new CopilotSessionWrapper(raw);
 			} catch (err) {
 				const errCode = (err as { code?: number })?.code;
@@ -1674,7 +1724,7 @@ export class CopilotAgent extends Disposable implements IAgent {
 
 				this._logService.warn(`[Copilot:${sessionId}] Resume failed (code=-32603), falling back to createSession with same ID`);
 				const raw = await client.createSession({
-					...config,
+					...resume,
 					sessionId,
 					streaming: true,
 					model: storedMetadata.model?.id,
@@ -1683,6 +1733,7 @@ export class CopilotAgent extends Disposable implements IAgent {
 					workingDirectory: workingDirectory?.fsPath,
 				});
 				this._logService.info(`[Copilot:${sessionId}] Fallback createSession succeeded`);
+				await this._applySandboxConfig(raw, sandboxConfig, sessionId);
 
 				return new CopilotSessionWrapper(raw);
 			}

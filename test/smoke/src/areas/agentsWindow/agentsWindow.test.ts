@@ -33,6 +33,9 @@ const AGENT_HOST_REPLY = 'MOCKED_AGENT_HOST_RESPONSE';
 const AGENT_HOST_SANDBOX_SCENARIO_ID = 'smoke-hello-agent-host-sandbox';
 const AGENT_HOST_SANDBOX_REPLY = 'MOCKED_AGENT_HOST_SANDBOX_RESPONSE';
 
+const AGENT_HOST_SDK_SANDBOX_SCENARIO_ID = 'smoke-hello-agent-host-sdk-sandbox';
+const AGENT_HOST_SDK_SANDBOX_REPLY = 'MOCKED_AGENT_HOST_SDK_SANDBOX_RESPONSE';
+
 export function setup(logger: Logger) {
 
 	describe('Agents Window', () => {
@@ -417,6 +420,157 @@ export function setup(logger: Logger) {
 			// + chat.agent.sandbox.enabled, both seeded above).
 			const agentHostLogPath = path.join(logsPath, 'agenthost.log');
 			const agentHostLog = await fs.promises.readFile(agentHostLogPath, 'utf8');
+			assert.match(
+				agentHostLog,
+				/\[Copilot:[^\]]+\] Auto-approving sandboxed shell command for tool call /,
+				`expected an "Auto-approving sandboxed shell command" entry in ${agentHostLogPath}`
+			);
+		});
+	});
+
+	describe('Agents Window (local AgentHost, SDK sandbox)', () => {
+
+		// Variant of the AgentHost suite that leaves
+		// `chat.agentHost.customTerminalTool.enabled` at its default (false), so
+		// the SDK’s built-in shell tool runs commands. The AgentHost forwards
+		// `chat.agent.sandbox.*` into the SDK via `session.options.update`
+		// (mirroring how the Copilot extension configures the CLI sandbox), so
+		// shell commands still run mxc-wrapped and the SDK’s pre-call shell
+		// permission prompt is auto-approved on the same code path as the
+		// custom-terminal-tool variant above.
+
+		let mockServer: MockLlmServer;
+		let logsPath: string;
+
+		before(async function () {
+			const { startServer, ScenarioBuilder, registerScenario } = require(getMockLlmServerPath());
+
+			registerScenario('text-only', new ScenarioBuilder().emit('OK').build());
+			registerScenario(AGENT_HOST_SDK_SANDBOX_SCENARIO_ID, {
+				type: 'multi-turn',
+				turns: [
+					{
+						kind: 'tool-calls',
+						toolCalls: [
+							{
+								toolNamePattern: /^(bash|pwsh|powershell)$/i,
+								arguments: { command: `echo ${AGENT_HOST_SDK_SANDBOX_REPLY}` },
+							},
+						],
+					},
+					{ kind: 'echo-last-message' },
+				],
+			});
+
+			mockServer = await startServer(0, { logger: (msg: string) => logger.log(msg), verbose: true });
+			logger.log(`Mock LLM server (AgentHost SDK sandbox) started at ${mockServer.url}`);
+		});
+
+		installDiagnosticsHandler(logger);
+
+		before(async function () {
+			const suiteName = this.test?.parent?.title ?? 'unknown';
+			const defaultOptions: ApplicationOptions = {
+				...this.defaultOptions,
+				logsPath: suiteLogsPath(this.defaultOptions, suiteName),
+				crashesPath: suiteCrashPath(this.defaultOptions, suiteName),
+			};
+			logsPath = defaultOptions.logsPath;
+			this.app = createApp(defaultOptions, opts => ({
+				...opts,
+				extraEnv: {
+					...(opts.extraEnv ?? {}),
+					...getCopilotSmokeTestEnv(mockServer),
+					COPILOT_ENABLE_ALT_PROVIDERS: 'true',
+					COPILOT_API_URL: mockServer.url,
+					COPILOT_DEBUG_GITHUB_API_URL: mockServer.url,
+					GITHUB_COPILOT_API_TOKEN: 'smoketest-fake-agent-host-token',
+				},
+			}));
+
+			const userDataDir = (this.app as Application).userDataPath;
+			if (userDataDir) {
+				const settings = JSON.stringify({
+					'github.copilot.advanced.debug.overrideProxyUrl': mockServer.url,
+					'chat.allowAnonymousAccess': true,
+					'github.copilot.chat.githubMcpServer.enabled': false,
+					'chat.agentHost.enabled': true,
+					'chat.agentHost.ahpJsonlLoggingEnabled': true,
+					'chat.agentHost.unsafeTestToken': 'smoketest-fake-agent-host-token',
+					// customTerminalTool intentionally OFF (default) — the SDK runs
+					// the shell tool, and the AgentHost is expected to forward
+					// `chat.agent.sandbox.*` into the SDK so commands still run
+					// sandboxed. The SDK-sandbox gate defaults to 'off'; set it
+					// to 'on' explicitly so the test exercises the SDK sandbox
+					// override path.
+					'chat.agentHost.sdkSandbox.enabled': 'on',
+					'chat.agent.sandbox.enabled': 'on',
+				}, null, 2);
+				for (const settingsPath of [
+					path.join(userDataDir, 'User', 'settings.json'),
+					path.join(userDataDir, 'User', 'profiles', 'builtin', 'agents', 'settings.json'),
+				]) {
+					fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+					fs.writeFileSync(settingsPath, settings);
+				}
+			}
+
+			await (this.app as Application).start();
+		});
+
+		installAppAfterHandler();
+
+		before(async function () {
+			const app = this.app as Application;
+			cp.execSync('git checkout . --quiet', { cwd: app.workspacePathOrFolder });
+			const windowsBefore = app.code.driver.getAllWindows().length;
+			await app.workbench.agentsWindow.openCurrentFolderInAgentsWindow();
+			await app.workbench.agentsWindow.switchToAgentsWindow(windowsBefore);
+		});
+
+		after(async function () {
+			if (mockServer) {
+				await mockServer.close();
+			}
+		});
+
+		it('Test Copilot CLI session via AgentHost (SDK sandbox)', async function () {
+			// See the Copilot CLI sandbox test above for the rationale on
+			// platform gating and where to find logs when debugging CI runs.
+			if (process.platform !== 'darwin') {
+				this.skip();
+			}
+
+			this.timeout(5 * 60 * 1000);
+
+			const app = this.app as Application;
+
+			await app.workbench.agentsWindow.waitForNewSessionView();
+			await app.workbench.agentsWindow.selectSessionType('Local Agent Host');
+
+			const requestsBefore = mockServer.requestCount();
+			await app.workbench.agentsWindow.submitNewSessionPrompt(`hello world [scenario:${AGENT_HOST_SDK_SANDBOX_SCENARIO_ID}]`);
+
+			const text = await app.workbench.agentsWindow.waitForAssistantText(AGENT_HOST_SDK_SANDBOX_REPLY, 120_000);
+			logger.log(`Agents Window (AgentHost SDK sandbox) response: ${text}`);
+
+			assert.ok(
+				mockServer.requestCount() > requestsBefore,
+				'expected the mock LLM server to have received a new request from the AgentHost SDK sandbox session'
+			);
+
+			// Two assertions on the AgentHost utility-process log:
+			//  1. `_applySandboxConfig` ran — the AgentHost actually pushed
+			//     `sandboxConfig` to the SDK via `session.options.update`.
+			//  2. The SDK’s pre-call shell permission prompt was auto-approved
+			//     via the new SDK-side branch of `_isShellSandboxedByDefault`.
+			const agentHostLogPath = path.join(logsPath, 'agenthost.log');
+			const agentHostLog = await fs.promises.readFile(agentHostLogPath, 'utf8');
+			assert.match(
+				agentHostLog,
+				/\[Copilot:[^\]]+\] Applied SDK sandboxConfig via session\.options\.update/,
+				`expected an "Applied SDK sandboxConfig" entry in ${agentHostLogPath}`
+			);
 			assert.match(
 				agentHostLog,
 				/\[Copilot:[^\]]+\] Auto-approving sandboxed shell command for tool call /,
