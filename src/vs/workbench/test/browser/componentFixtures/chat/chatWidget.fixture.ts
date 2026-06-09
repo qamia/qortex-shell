@@ -356,7 +356,7 @@ const MULTI_TURN: IFixtureMessage[] = [
 	{
 		user: 'What does this project do?',
 		assistant: [
-			{ kind: 'markdown', text: 'This project is **Visual Studio Code**, a free source-code editor made by Microsoft for Windows, Linux and macOS.' },
+			{ kind: 'markdown', text: 'This project is **Qortex**, a free source-code editor made by Microsoft for Windows, Linux and macOS.' },
 		],
 	},
 	{

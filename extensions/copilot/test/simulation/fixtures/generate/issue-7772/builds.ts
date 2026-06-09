@@ -222,7 +222,7 @@ class Builds {
 				switch (platform) {
 					case Platform.MacOSX64:
 					case Platform.MacOSArm:
-						return 'Visual Studio Code - Insiders.app';
+						return 'Qortex - Insiders.app';
 					case Platform.LinuxX64:
 						return 'VSCode-linux-x64';
 					case Platform.LinuxArm:

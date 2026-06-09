@@ -50,7 +50,7 @@ describe('extractToolParameters', () => {
 		expect(gatedAttrs).toEqual({});
 	});
 
-	it('classifies VS Code snake_case edit tool names', () => {
+	it('classifies Qortex snake_case edit tool names', () => {
 		expect(extractToolParameters('create_file', { filePath: '/a.ts' }).attrs[GitHubCopilotAttr.TOOL_PARAM_EDIT_TYPE]).toBe('create');
 		expect(extractToolParameters('replace_string_in_file', { filePath: '/a.ts' }).attrs[GitHubCopilotAttr.TOOL_PARAM_EDIT_TYPE]).toBe('str_replace');
 		expect(extractToolParameters('multi_replace_string_in_file', { filePath: '/a.ts' }).attrs[GitHubCopilotAttr.TOOL_PARAM_EDIT_TYPE]).toBe('str_replace');

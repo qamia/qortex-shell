@@ -16,7 +16,7 @@ describe('byokKnownModelToAPIInfo', () => {
 		vision: false,
 	};
 
-	it('forwards editTools into capabilities so VS Code core can populate editToolsHint', () => {
+	it('forwards editTools into capabilities so Qortex core can populate editToolsHint', () => {
 		const info = byokKnownModelToAPIInfo('TestProvider', 'm1', {
 			...baseCapabilities,
 			editTools: ['apply-patch'],

@@ -851,7 +851,7 @@ suite('CopilotAgent', () => {
 		// service drops `config.fork` for sources with no turns, so the call
 		// reduces to a plain new-session create.
 
-		test('materialization passes VS Code-specific system message to the SDK', async () => {
+		test('materialization passes Qortex-specific system message to the SDK', async () => {
 			const sessionDataService = disposables.add(new TestSessionDataService());
 			const client = new TestCopilotClient([]);
 			let capturedConfig: Parameters<ITestCopilotClient['createSession']>[0] | undefined;
@@ -881,7 +881,7 @@ suite('CopilotAgent', () => {
 				assert.strictEqual(systemMessage.sections?.identity?.action, 'replace');
 				assert.strictEqual(
 					systemMessage.sections?.identity?.content,
-					'You are an AI assistant using Copilot CLI runtime in VS Code. You help users with software engineering tasks. When asked about your identity, you must state that you are an AI assistant using Copilot CLI runtime in VS Code.'
+					'You are an AI assistant using Copilot CLI runtime in Qortex. You help users with software engineering tasks. When asked about your identity, you must state that you are an AI assistant using Copilot CLI runtime in Qortex.'
 				);
 			} finally {
 				await disposeAgent(agent);

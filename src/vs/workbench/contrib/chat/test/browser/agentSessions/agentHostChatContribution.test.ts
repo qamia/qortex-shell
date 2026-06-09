@@ -3490,7 +3490,7 @@ suite('AgentHostChatContribution', () => {
 		}));
 
 		test('handler does not clobber picker-set session config on eager-create path', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
-			// Repro for the VS Code chat-input picker bug: the user picks
+			// Repro for the Qortex chat-input picker bug: the user picks
 			// "Worktree" via the chip, the picker dispatches
 			// SessionConfigChanged({ isolation: 'worktree' }) directly
 			// against the provisional backend, then sends a message. The
@@ -3520,7 +3520,7 @@ suite('AgentHostChatContribution', () => {
 
 			const registered = chatAgentService.registeredAgents.get('agent-host-copilot')!;
 			// No `agentHostSessionConfig` on the request — this models the
-			// VS Code workbench path where the picker dispatches directly.
+			// Qortex workbench path where the picker dispatches directly.
 			const turnPromise = registered.impl.invoke(
 				makeRequest({ message: 'Pick worktree and send', sessionResource }),
 				() => { }, [], CancellationToken.None,

@@ -2578,16 +2578,16 @@ For more information about output formatting flags, see 'gh help formatting'`,
 			subcommands: [
 				{
 					name: "code",
-					description: "Open a codespace in Visual Studio Code",
+					description: "Open a codespace in Qortex",
 					options: [
 						codespaceOption,
 						{
 							name: "--insiders",
-							description: "Use the insiders version of Visual Studio Code",
+							description: "Use the insiders version of Qortex",
 						},
 						{
 							name: ["-w", "--web"],
-							description: "Use the web version of Visual Studio Code",
+							description: "Use the web version of Qortex",
 						},
 					],
 				},

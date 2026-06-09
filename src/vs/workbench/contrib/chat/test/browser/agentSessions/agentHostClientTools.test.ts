@@ -500,7 +500,7 @@ suite('AgentHostClientTools', () => {
 			id: 'vscode.runTask',
 			toolReferenceName: 'runTask',
 			displayName: 'Run Task',
-			modelDescription: 'Runs a VS Code task',
+			modelDescription: 'Runs a Qortex task',
 			source: ToolDataSource.Internal,
 			inputSchema: { type: 'object', properties: { task: { type: 'string' } } },
 		};

@@ -70,7 +70,7 @@ describe('filterSecrets', () => {
 		expect(result).not.toContain('npm_');
 	});
 
-	// ── VS Code-specific patterns ───────────────────────────────────────────
+	// ── Qortex-specific patterns ───────────────────────────────────────────
 
 	it('redacts RSA private key blocks', () => {
 		const input = 'key:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----\ndone';

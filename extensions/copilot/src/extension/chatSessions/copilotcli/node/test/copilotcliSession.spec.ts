@@ -968,7 +968,7 @@ describe('CopilotCLISession', () => {
 		const notifiedAnswers: Array<{ toolCallId: string; question: IQuestion; response: UserInputResponse }> = [];
 		sdkSession.send = async () => {
 			userInputResult = await sdkSession.emitUserInputRequest({
-				question: 'What is your favorite VS Code feature or extension?',
+				question: 'What is your favorite Qortex feature or extension?',
 				allowFreeform: true,
 				toolCallId: 'ask-user-tool',
 			});
@@ -1008,7 +1008,7 @@ describe('CopilotCLISession', () => {
 
 		const requestPromise = session.handleRequest(
 			{ id: '', toolInvocationToken: {} as never },
-			{ prompt: 'Ask me about VS Code' },
+			{ prompt: 'Ask me about Qortex' },
 			[],
 			undefined,
 			authInfo,
@@ -1036,10 +1036,10 @@ describe('CopilotCLISession', () => {
 		expect(notifiedAnswers).toEqual([{
 			toolCallId: 'ask-user-tool',
 			question: {
-				question: 'What is your favorite VS Code feature or extension?',
+				question: 'What is your favorite Qortex feature or extension?',
 				options: [],
 				allowFreeformInput: true,
-				header: 'What is your favorite VS Code feature or extension?',
+				header: 'What is your favorite Qortex feature or extension?',
 			},
 			response: { answer: 'none', wasFreeform: true },
 		}]);
@@ -1051,7 +1051,7 @@ describe('CopilotCLISession', () => {
 		let userInputResult: unknown;
 		sdkSession.send = async () => {
 			userInputResult = await sdkSession.emitUserInputRequest({
-				question: 'What is your favorite VS Code feature or extension?',
+				question: 'What is your favorite Qortex feature or extension?',
 				allowFreeform: true,
 				toolCallId: 'ask-user-tool',
 			});
@@ -1093,7 +1093,7 @@ describe('CopilotCLISession', () => {
 
 		const requestPromise = session.handleRequest(
 			{ id: '', toolInvocationToken: {} as never },
-			{ prompt: 'Ask me about VS Code' },
+			{ prompt: 'Ask me about Qortex' },
 			[],
 			undefined,
 			authInfo,

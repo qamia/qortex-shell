@@ -681,7 +681,7 @@ suite('ChatSessionOperationLog', () => {
 			const json = JSON.stringify(obj, Adapt.makeTruncatingReplacer(1024 * 1024, 10 * 1024 * 1024));
 			const parsed = JSON.parse(json);
 			assert.notStrictEqual(parsed.content, big);
-			assert.ok(parsed.content.startsWith('[VS Code:'));
+			assert.ok(parsed.content.startsWith('[Qortex:'));
 			assert.strictEqual(parsed.label, 'ok');
 		});
 
@@ -752,7 +752,7 @@ suite('ChatSessionOperationLog', () => {
 			const out = Adapt.stringifyEntryWithFallback(entry);
 			const parsed = JSON.parse(out);
 			assert.notStrictEqual(parsed.content, big);
-			assert.ok(parsed.content.startsWith('[VS Code:'), `unexpected: ${parsed.content.slice(0, 80)}`);
+			assert.ok(parsed.content.startsWith('[Qortex:'), `unexpected: ${parsed.content.slice(0, 80)}`);
 			assert.strictEqual(parsed.label, 'ok');
 		});
 	});

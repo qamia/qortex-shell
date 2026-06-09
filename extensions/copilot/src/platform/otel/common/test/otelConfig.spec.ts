@@ -37,14 +37,14 @@ describe('resolveOTelConfig', () => {
 		expect(config.otlpEndpoint).toBe('http://collector:4318/');
 	});
 
-	it('enables via VS Code setting', () => {
+	it('enables via Qortex setting', () => {
 		const config = resolveOTelConfig(makeInput({
 			settingEnabled: true,
 		}));
 		expect(config.enabled).toBe(true);
 	});
 
-	it('env COPILOT_OTEL_ENABLED overrides VS Code setting', () => {
+	it('env COPILOT_OTEL_ENABLED overrides Qortex setting', () => {
 		const config = resolveOTelConfig(makeInput({
 			env: { 'COPILOT_OTEL_ENABLED': 'false' },
 			settingEnabled: true,
@@ -72,7 +72,7 @@ describe('resolveOTelConfig', () => {
 		expect(config.fileExporterPath).toBe('/tmp/otel.jsonl');
 	});
 
-	it('uses VS Code setting for exporter type', () => {
+	it('uses Qortex setting for exporter type', () => {
 		const config = resolveOTelConfig(makeInput({
 			settingEnabled: true,
 			settingExporterType: 'console',
@@ -90,7 +90,7 @@ describe('resolveOTelConfig', () => {
 		expect(config.captureContent).toBe(true);
 	});
 
-	it('captureContent env overrides VS Code setting', () => {
+	it('captureContent env overrides Qortex setting', () => {
 		const config = resolveOTelConfig(makeInput({
 			env: {
 				'COPILOT_OTEL_ENABLED': 'true',
@@ -193,7 +193,7 @@ describe('resolveOTelConfig', () => {
 			expect(config.enabledVia).toBe('dbSpanExporterOnly');
 		});
 
-		it('returns setting when enabled via VS Code setting', () => {
+		it('returns setting when enabled via Qortex setting', () => {
 			const config = resolveOTelConfig(makeInput({
 				settingEnabled: true,
 			}));
@@ -242,7 +242,7 @@ describe('resolveOTelConfig', () => {
 			expect(config.maxAttributeSizeChars).toBe(0);
 		});
 
-		it('uses VS Code setting when env var is unset', () => {
+		it('uses Qortex setting when env var is unset', () => {
 			const config = resolveOTelConfig(makeInput({
 				settingEnabled: true,
 				settingMaxAttributeSizeChars: 64_000,
@@ -258,7 +258,7 @@ describe('resolveOTelConfig', () => {
 			expect(config.maxAttributeSizeChars).toBe(0);
 		});
 
-		it('env var overrides VS Code setting', () => {
+		it('env var overrides Qortex setting', () => {
 			const config = resolveOTelConfig(makeInput({
 				env: {
 					'COPILOT_OTEL_ENABLED': 'true',

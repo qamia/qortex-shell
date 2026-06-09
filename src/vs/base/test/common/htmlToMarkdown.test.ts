@@ -150,7 +150,7 @@ suite('htmlToMarkdown', () => {
 	test('handles a realistic web page snippet', () => {
 		const html = `
 			<h1>Getting Started</h1>
-			<p>Welcome to <strong>VS Code</strong>. Visit <a href="https://code.visualstudio.com">the website</a> for more info.</p>
+			<p>Welcome to <strong>Qortex</strong>. Visit <a href="https://code.visualstudio.com">the website</a> for more info.</p>
 			<ul>
 				<li>Fast</li>
 				<li>Extensible</li>
@@ -158,7 +158,7 @@ suite('htmlToMarkdown', () => {
 		`;
 		const md = convertHtmlToMarkdown(html);
 		assert.ok(md.includes('# Getting Started'));
-		assert.ok(md.includes('**VS Code**'));
+		assert.ok(md.includes('**Qortex**'));
 		assert.ok(md.includes('[the website](https://code.visualstudio.com)'));
 		assert.ok(md.includes('- Fast'));
 		assert.ok(md.includes('- Extensible'));

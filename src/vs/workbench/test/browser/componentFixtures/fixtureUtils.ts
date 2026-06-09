@@ -250,7 +250,7 @@ const mockEnvironmentService: IEnvironmentService = Object.create(null);
 // Eagerly bundle all built-in theme JSON files so they can be served to
 // `_loadColorTheme` via the IExtensionResourceLoaderService code path. The
 // rspack config maps these JSON files to `asset/source`, so they are imported
-// as raw text (not parsed JSON) — this lets VS Code's JSONC parser handle
+// as raw text (not parsed JSON) — this lets Qortex's JSONC parser handle
 // comments and trailing commas the way it does in the real product.
 /* eslint-disable local/code-import-patterns */
 import dark_modern from '../../../../../../extensions/theme-defaults/themes/dark_modern.json' with { type: 'json' };

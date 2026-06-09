@@ -333,7 +333,7 @@ suite('AgentHostTerminalContribution', () => {
 		assert.strictEqual(resolver.lastOptions?.remoteAuthority, undefined);
 	});
 
-	test('dispatches inverted disableCustomTerminalTool from the VS Code setting', async () => {
+	test('dispatches inverted disableCustomTerminalTool from the Qortex setting', async () => {
 		const { agentHostService, configurationService } = setup(disposables);
 		configurationService.setUserConfiguration(AgentHostCustomTerminalToolEnabledSettingId, false);
 

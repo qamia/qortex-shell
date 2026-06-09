@@ -28,7 +28,7 @@ function discoveredBundle(uri: string): Customization {
 		type: CustomizationType.Plugin,
 		id: customizationId(uri),
 		uri,
-		name: 'VS Code Synced Data',
+		name: 'Qortex Synced Data',
 		enabled: true,
 		load: { kind: CustomizationLoadStatus.Loaded },
 	};

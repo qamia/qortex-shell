@@ -353,7 +353,7 @@ describe('CopilotCLISessionService', () => {
 			}));
 		});
 
-		it('passes the VS Code Copilot CLI identity system message to session manager', async () => {
+		it('passes the Qortex Copilot CLI identity system message to session manager', async () => {
 			const createSessionSpy = vi.spyOn(manager, 'createSession');
 			await service.createSession({ model: 'gpt-test', ...sessionOptionsFor(URI.file('/tmp')) }, CancellationToken.None);
 
@@ -369,7 +369,7 @@ describe('CopilotCLISessionService', () => {
 			});
 		});
 
-		it('preserves prompt variable context separately from the VS Code Copilot CLI identity system message', async () => {
+		it('preserves prompt variable context separately from the Qortex Copilot CLI identity system message', async () => {
 			const variableContext = 'Resolved template variables are available here.';
 			vi.spyOn(NullPromptVariablesService.prototype, 'buildTemplateVariablesContext').mockReturnValue(variableContext);
 			const createSessionSpy = vi.spyOn(manager, 'createSession');
@@ -423,7 +423,7 @@ describe('CopilotCLISessionService', () => {
 			}), true);
 		});
 
-		it('passes the VS Code Copilot CLI identity system message when getting an existing session', async () => {
+		it('passes the Qortex Copilot CLI identity system message when getting an existing session', async () => {
 			const targetId = 'system-message-get';
 			manager.sessions.set(targetId, new MockCliSdkSession(targetId, new Date()));
 			const getSessionSpy = vi.spyOn(manager, 'getSession');
@@ -547,10 +547,10 @@ describe('CopilotCLISessionService', () => {
 			const sessionId = 'rename-inactive';
 			manager.sessions.set(sessionId, new MockCliSdkSession(sessionId, new Date()));
 
-			await service.renameSession(sessionId, 'Renamed From VS Code');
+			await service.renameSession(sessionId, 'Renamed From Qortex');
 
-			expect(manager.sessions.get(sessionId)?.title).toBe('Renamed From VS Code');
-			expect(await service.getSessionTitle(sessionId, CancellationToken.None)).toBe('Renamed From VS Code');
+			expect(manager.sessions.get(sessionId)?.title).toBe('Renamed From Qortex');
+			expect(await service.getSessionTitle(sessionId, CancellationToken.None)).toBe('Renamed From Qortex');
 		});
 
 		it('renames an active wrapped session through copilot/sdk', async () => {

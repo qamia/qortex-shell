@@ -1231,7 +1231,7 @@ export default defineThemedFixtureGroup({ path: 'chat/aiCustomizations/' }, {
 		render: ctx => renderEditor(ctx, { sessionResource: localSessionResource }),
 	}),
 
-	// Full editor with Local (VS Code) harness — all sections visible, harness dropdown,
+	// Full editor with Local (Qortex) harness — all sections visible, harness dropdown,
 	// Generate buttons, AGENTS.md shortcut, all storage groups
 	LocalHarness: defineComponentFixture({
 		labels: { kind: 'screenshot' },
