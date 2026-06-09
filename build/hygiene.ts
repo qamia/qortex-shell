@@ -52,8 +52,12 @@ export function hygiene(some: NodeJS.ReadWriteStream | string[] | undefined, run
 	const productJson = es.through(function (file: VinylFile) {
 		const product = JSON.parse(file.contents!.toString('utf8'));
 
-		if (product.extensionsGallery) {
-			console.error(`product.json: Contains 'extensionsGallery'`);
+		// Qortex (QAM-489): this fork intentionally ships an Open VSX
+		// 'extensionsGallery'. Upstream's hygiene guard forbids it to keep the
+		// OSS repo gallery-free; that policy does not apply to a branded
+		// distribution. Instead, just sanity-check that it is well-formed.
+		if (product.extensionsGallery && !product.extensionsGallery.serviceUrl) {
+			console.error(`product.json: 'extensionsGallery' is present but missing 'serviceUrl'`);
 			errorCount++;
 		}
 

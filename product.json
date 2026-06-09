@@ -6,8 +6,8 @@
 	"sharedDataFolderName": ".qortex-shared",
 	"win32MutexName": "qortex",
 	"licenseName": "MIT",
-	"licenseUrl": "https://github.com/amine449/qortex-shell/blob/main/LICENSE.txt",
-	"serverLicenseUrl": "https://github.com/amine449/qortex-shell/blob/main/LICENSE.txt",
+	"licenseUrl": "https://github.com/qamia/qortex-shell/blob/main/LICENSE.txt",
+	"serverLicenseUrl": "https://github.com/qamia/qortex-shell/blob/main/LICENSE.txt",
 	"serverGreeting": [],
 	"serverLicense": [],
 	"serverLicensePrompt": "",
@@ -30,9 +30,16 @@
 	"darwinProfilePayloadUUID": "D89B2BF4-FB90-41D3-A61E-FD09CBAAD55B",
 	"linuxIconName": "qortex",
 	"licenseFileName": "LICENSE.txt",
-	"reportIssueUrl": "https://github.com/amine449/qortex/issues/new",
+	"reportIssueUrl": "https://github.com/qamia/qortex/issues/new",
 	"nodejsRepository": "https://nodejs.org",
 	"urlProtocol": "qortex",
+	"extensionsGallery": {
+		"serviceUrl": "https://open-vsx.org/vscode/gallery",
+		"itemUrl": "https://open-vsx.org/vscode/item",
+		"resourceUrlTemplate": "https://open-vsx.org/vscode/unpkg/{publisher}/{name}/{version}/{path}"
+	},
+	"updateUrl": "https://update.qortex.qamia.dev",
+	"quality": "stable",
 	"agentsTelemetryAppName": "agents",
 	"webviewContentExternalBaseUrlTemplate": "https://{{uuid}}.vscode-cdn.net/insider/ef65ac1ba57f57f2a3961bfe94aa20481caca4c6/out/vs/workbench/contrib/webview/browser/pre/",
 	"builtInExtensions": [
