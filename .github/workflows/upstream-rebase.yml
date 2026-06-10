@@ -1,0 +1,130 @@
+# Qortex — upstream VS Code rebase maintenance (QAM-491)
+#
+# Running a Code-OSS fork means periodically re-applying our (small) branding
+# patch series onto newer microsoft/vscode releases. This workflow automates the
+# tax: weekly it checks upstream for a newer stable tag and, if found, replays
+# our commits onto it via `git rebase --onto`, then opens a rebase PR (clean) or
+# files an issue (conflicts). See docs/UPSTREAM_REBASE.md for the process.
+#
+# The current upstream baseline is tracked in the `qortex-upstream-base.txt` file at
+# the repo root. The workflow bumps it on a successful rebase.
+#
+# NOTE: requires repo setting "Allow GitHub Actions to create and approve pull
+# requests" (Settings > Actions > General) for the auto-PR step.
+
+name: Upstream Rebase
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      target_tag:
+        description: "Upstream tag to rebase onto (blank = latest stable)"
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: upstream-rebase
+  cancel-in-progress: false
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "qortex-rebase-bot"
+          git config user.email "qortex-rebase-bot@users.noreply.github.com"
+
+      - name: Fetch upstream tags
+        run: |
+          git remote add upstream https://github.com/microsoft/vscode.git
+          git fetch --force --tags upstream
+
+      - name: Determine base + target
+        id: tags
+        run: |
+          BASE="$(tr -d '[:space:]' < qortex-upstream-base.txt)"
+          if [ -n "${{ inputs.target_tag }}" ]; then
+            TARGET="${{ inputs.target_tag }}"
+          else
+            # latest plain semver stable tag (x.y.z), highest version
+            TARGET="$(git tag -l | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          fi
+          echo "base=$BASE"     >> "$GITHUB_OUTPUT"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          if [ -z "$TARGET" ] || [ "$BASE" = "$TARGET" ]; then
+            echo "uptodate=true" >> "$GITHUB_OUTPUT"
+            echo "Already on latest ($BASE); nothing to do."
+          else
+            echo "uptodate=false" >> "$GITHUB_OUTPUT"
+            echo "New upstream release: $BASE -> $TARGET"
+          fi
+
+      - name: Rebase branding onto target
+        if: steps.tags.outputs.uptodate == 'false'
+        id: rebase
+        run: |
+          set +e
+          TARGET="${{ steps.tags.outputs.target }}"
+          BASE="${{ steps.tags.outputs.base }}"
+          BR="rebase/${TARGET}"
+          git checkout -B "$BR" origin/main
+          # Replay our commits (BASE..main) onto the new upstream tag.
+          git rebase --onto "$TARGET" "$BASE" "$BR"
+          if [ $? -eq 0 ]; then
+            # bump the baseline marker on top of the rebased branding
+            printf '%s\n' "$TARGET" > qortex-upstream-base.txt
+            git add qortex-upstream-base.txt
+            git commit -m "chore(rebase): bump upstream base ${BASE} -> ${TARGET}"
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            git rebase --abort
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open rebase PR (clean)
+        if: steps.rebase.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TARGET="${{ steps.tags.outputs.target }}"
+          git push --force-with-lease origin "rebase/${TARGET}"
+          gh pr create \
+            --base main \
+            --head "rebase/${TARGET}" \
+            --title "Rebase onto upstream VS Code ${TARGET}" \
+            --body "Automated rebase of the Qortex branding patch series from \`${{ steps.tags.outputs.base }}\` onto upstream microsoft/vscode \`${TARGET}\`.
+
+          **Before merging:** run the Qortex Build workflow and smoke-test launch (branding intact, gallery, etc.). The \`qortex-upstream-base.txt\` marker has been bumped to \`${TARGET}\`." \
+            || echo "PR already exists for rebase/${TARGET}"
+
+      - name: File issue (conflicts)
+        if: steps.rebase.outputs.ok == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TARGET="${{ steps.tags.outputs.target }}"
+          gh issue create \
+            --title "Upstream rebase ${{ steps.tags.outputs.base }} -> ${TARGET} needs manual resolution" \
+            --body "The automated rebase onto upstream VS Code \`${TARGET}\` hit conflicts and was aborted. Resolve manually — see \`docs/UPSTREAM_REBASE.md\`.
+
+          \`\`\`
+          git fetch --tags upstream
+          git checkout -B rebase/${TARGET} origin/main
+          git rebase --onto ${TARGET} ${{ steps.tags.outputs.base }} rebase/${TARGET}
+          # resolve conflicts, then: echo ${TARGET} > qortex-upstream-base.txt && git commit -am 'bump base'
+          \`\`\`" \
+            || echo "issue may already exist"
