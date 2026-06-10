@@ -1,0 +1,145 @@
+# Qortex — cross-platform build & packaging (QAM-490)
+#
+# Produces UNSIGNED Qortex application bundles for Windows, macOS, and Linux by
+# running the upstream VS Code gulp packaging tasks on each platform's runner.
+# This is the reproducible build pipeline; code-signing/notarization + native
+# installers are a separate issue (QAM-507).
+#
+# Triggers are intentionally narrow (manual + the feature branch) so this does
+# not fire on every push or collide with the inherited upstream workflows.
+
+name: Qortex Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Which platforms to build (all | linux | win | mac)"
+        default: "all"
+        type: string
+  push:
+    branches:
+      - feature/qam-490
+
+permissions:
+  contents: read
+
+# A VS Code build is heavy; don't run duplicate builds for the same ref.
+concurrency:
+  group: qortex-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x64
+            gulp: vscode-linux-x64-min
+            out: VSCode-linux-x64
+          - os: windows-latest
+            label: win32-x64
+            gulp: vscode-win32-x64-min
+            out: VSCode-win32-x64
+          - os: macos-latest
+            label: darwin-arm64
+            gulp: vscode-darwin-arm64-min
+            out: VSCode-darwin-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node (from .nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Setup Python (node-gyp)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # --- Linux: native-module build deps (X11, keyring, kerberos, packaging) ---
+      - name: Linux build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libx11-dev libxkbfile-dev libsecret-1-dev libkrb5-dev \
+            fakeroot rpm
+
+      # --- Windows: add ClangCL + Spectre-mitigated libs (tree-sitter needs ClangCL) ---
+      # GitHub's windows-latest ships VS 2022; ensure the components we hit locally.
+      - name: Windows VS C++ components (ClangCL + Spectre)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $components = @(
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre",
+            "Microsoft.VisualStudio.Component.VC.Llvm.Clang",
+            "Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset"
+          )
+          $args = @("modify","--installPath","`"$vsPath`"","--quiet","--norestart","--norestart")
+          foreach ($c in $components) { $args += @("--add", $c) }
+          Start-Process -FilePath $vsInstaller -ArgumentList $args -Wait -NoNewWindow
+        continue-on-error: true
+
+      # --- Windows: LTCG workaround ---
+      # node-gyp's default Release config passes /LTCG:INCREMENTAL, which ClangCL's
+      # llvm-lib rejects (breaks tree-sitter). Disable the LTCG block in addon.gypi.
+      - name: Windows node-gyp LTCG workaround
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $gyp = Join-Path (npm root -g) "node-gyp\addon.gypi"
+          if (-not (Test-Path $gyp)) {
+            $gyp = "$env:APPDATA\npm\node_modules\npm\node_modules\node-gyp\addon.gypi"
+          }
+          if (Test-Path $gyp) {
+            (Get-Content $gyp) -replace 'node_with_ltcg=="true"', 'node_with_ltcg=="true_DISABLED_qortex_clangcl"' | Set-Content $gyp
+            Write-Host "Patched LTCG block in $gyp"
+          } else {
+            Write-Warning "addon.gypi not found; LTCG workaround skipped (build may fail on tree-sitter)"
+          }
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          npm_config_arch: x64
+
+      - name: Build + package (${{ matrix.gulp }})
+        run: npm run gulp ${{ matrix.gulp }}
+
+      # --- Archive the produced app bundle (output dir is created in the parent dir) ---
+      - name: Archive (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          test -d "../${{ matrix.out }}" || { echo "build output ../${{ matrix.out }} not found"; ls -la ..; exit 1; }
+          tar -czf "qortex-${{ matrix.label }}.tar.gz" -C .. "${{ matrix.out }}"
+
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "..\${{ matrix.out }}")) { Get-ChildItem ..; throw "build output ..\${{ matrix.out }} not found" }
+          Compress-Archive -Path "..\${{ matrix.out }}\*" -DestinationPath "qortex-${{ matrix.label }}.zip" -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qortex-${{ matrix.label }}
+          path: |
+            qortex-${{ matrix.label }}.tar.gz
+            qortex-${{ matrix.label }}.zip
+          if-no-files-found: error
+          retention-days: 14
