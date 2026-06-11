@@ -88,7 +88,12 @@ interface IMcpRegistryResponse {
 	readonly mcp_registries: ReadonlyArray<IMcpRegistryProvider>;
 }
 
-function toDefaultAccountConfig(defaultChatAgent: IDefaultChatAgent): IDefaultAccountConfig {
+// Qortex (QAM-511): defaultChatAgent is optional — no default chat agent is
+// bundled (FenneQ replaces Copilot). Return undefined and let callers no-op.
+function toDefaultAccountConfig(defaultChatAgent: IDefaultChatAgent | undefined): IDefaultAccountConfig | undefined {
+	if (!defaultChatAgent) {
+		return undefined;
+	}
 	return {
 		preferredExtensions: [
 			defaultChatAgent.chatExtensionId,
@@ -136,7 +141,7 @@ export class DefaultAccountService extends Disposable implements IDefaultAccount
 	private readonly _onDidChangeCopilotTokenInfo = this._register(new Emitter<ICopilotTokenInfo | null>());
 	readonly onDidChangeCopilotTokenInfo = this._onDidChangeCopilotTokenInfo.event;
 
-	private readonly defaultAccountConfig: IDefaultAccountConfig;
+	private readonly defaultAccountConfig: IDefaultAccountConfig | undefined;
 	private defaultAccountProvider: IDefaultAccountProvider | null = null;
 
 	constructor(
@@ -144,6 +149,11 @@ export class DefaultAccountService extends Disposable implements IDefaultAccount
 	) {
 		super();
 		this.defaultAccountConfig = toDefaultAccountConfig(productService.defaultChatAgent);
+		if (!this.defaultAccountConfig) {
+			// Qortex (QAM-511): no default chat agent — resolve as signed-out
+			// immediately so consumers awaiting the barrier never hang.
+			this.initBarrier.open();
+		}
 	}
 
 	async getDefaultAccount(): Promise<IDefaultAccount | null> {
@@ -154,6 +164,10 @@ export class DefaultAccountService extends Disposable implements IDefaultAccount
 	getDefaultAccountAuthenticationProvider(): IDefaultAccountAuthenticationProvider {
 		if (this.defaultAccountProvider) {
 			return this.defaultAccountProvider.getDefaultAccountAuthenticationProvider();
+		}
+		if (!this.defaultAccountConfig) {
+			// Qortex (QAM-511): no default chat agent configured
+			return { id: '', name: '', enterprise: false };
 		}
 		return {
 			...this.defaultAccountConfig.authenticationProvider.default,
@@ -1125,7 +1139,13 @@ class DefaultAccountProviderContribution extends Disposable implements IWorkbenc
 		@IDefaultAccountService defaultAccountService: IDefaultAccountService,
 	) {
 		super();
-		const defaultAccountProvider = this._register(instantiationService.createInstance(DefaultAccountProvider, toDefaultAccountConfig(productService.defaultChatAgent)));
+		const defaultAccountConfig = toDefaultAccountConfig(productService.defaultChatAgent);
+		if (!defaultAccountConfig) {
+			// Qortex (QAM-511): no default chat agent — skip the provider; the
+			// account service already resolved as signed-out.
+			return;
+		}
+		const defaultAccountProvider = this._register(instantiationService.createInstance(DefaultAccountProvider, defaultAccountConfig));
 		defaultAccountService.setDefaultAccountProvider(defaultAccountProvider);
 	}
 }
