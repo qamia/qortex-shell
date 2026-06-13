@@ -1,4 +1,4 @@
-# Qortex — cross-platform build & packaging (QAM-490)
+# Qortex — cross-platform build & packaging (QAM-490, hardened in QAM-512)
 #
 # Produces UNSIGNED Qortex application bundles for Windows, macOS, and Linux by
 # running the upstream VS Code gulp packaging tasks on each platform's runner.
@@ -7,6 +7,10 @@
 #
 # Triggers are intentionally narrow (manual + the feature branch) so this does
 # not fire on every push or collide with the inherited upstream workflows.
+#
+# The `platforms` dispatch input selects which legs run; a `setup` job expands it
+# into the build matrix (and pins each leg's native build arch — critical so the
+# Apple-silicon leg does not build x64 native modules).
 
 name: Qortex Build
 
@@ -14,9 +18,14 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: "Which platforms to build (all | linux | win | mac)"
+        description: "Which platforms to build"
         default: "all"
-        type: string
+        type: choice
+        options:
+          - all
+          - linux
+          - win
+          - mac
   push:
     branches:
       - feature/qam-490
@@ -30,26 +39,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Expand the `platforms` input into a build matrix. Each leg carries `npm_arch`
+  # so native modules are compiled for the bundle's target arch, not the runner's
+  # default (the darwin leg MUST be arm64, never x64).
+  setup:
+    name: Select platforms
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - name: Build matrix
+        id: pick
+        shell: bash
+        run: |
+          sel="${{ github.event.inputs.platforms || 'all' }}"
+          linux='{"os":"ubuntu-latest","label":"linux-x64","gulp":"vscode-linux-x64-min","out":"VSCode-linux-x64","npm_arch":"x64"}'
+          win='{"os":"windows-latest","label":"win32-x64","gulp":"vscode-win32-x64-min","out":"VSCode-win32-x64","npm_arch":"x64"}'
+          mac='{"os":"macos-latest","label":"darwin-arm64","gulp":"vscode-darwin-arm64-min","out":"VSCode-darwin-arm64","npm_arch":"arm64"}'
+          case "$sel" in
+            linux) inc="$linux" ;;
+            win)   inc="$win" ;;
+            mac)   inc="$mac" ;;
+            all|*) inc="$linux,$win,$mac" ;;
+          esac
+          echo "matrix={\"include\":[$inc]}" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.label }}
+    needs: setup
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            label: linux-x64
-            gulp: vscode-linux-x64-min
-            out: VSCode-linux-x64
-          - os: windows-latest
-            label: win32-x64
-            gulp: vscode-win32-x64-min
-            out: VSCode-win32-x64
-          - os: macos-latest
-            label: darwin-arm64
-            gulp: vscode-darwin-arm64-min
-            out: VSCode-darwin-arm64
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    env:
+      # Compile native modules for the bundle's target arch (not the runner host).
+      npm_config_arch: ${{ matrix.npm_arch }}
 
     steps:
       - name: Checkout
@@ -59,6 +84,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: ".nvmrc"
+          cache: npm
 
       - name: Setup Python (node-gyp)
         uses: actions/setup-python@v5
@@ -89,33 +115,47 @@ jobs:
             "Microsoft.VisualStudio.Component.VC.Llvm.Clang",
             "Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset"
           )
-          $args = @("modify","--installPath","`"$vsPath`"","--quiet","--norestart","--norestart")
-          foreach ($c in $components) { $args += @("--add", $c) }
-          Start-Process -FilePath $vsInstaller -ArgumentList $args -Wait -NoNewWindow
+          $vsArgs = @("modify", "--installPath", "`"$vsPath`"", "--quiet", "--norestart")
+          foreach ($c in $components) { $vsArgs += @("--add", $c) }
+          Start-Process -FilePath $vsInstaller -ArgumentList $vsArgs -Wait -NoNewWindow
         continue-on-error: true
 
       # --- Windows: LTCG workaround ---
       # node-gyp's default Release config passes /LTCG:INCREMENTAL, which ClangCL's
-      # llvm-lib rejects (breaks tree-sitter). Disable the LTCG block in addon.gypi.
+      # llvm-lib rejects (breaks tree-sitter). Disable the LTCG block in the
+      # node-gyp bundled inside the runner's npm. Fail loudly if it can't be found
+      # — a silent skip resurfaces as a confusing tree-sitter link error later.
       - name: Windows node-gyp LTCG workaround
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $gyp = Join-Path (npm root -g) "node-gyp\addon.gypi"
-          if (-not (Test-Path $gyp)) {
-            $gyp = "$env:APPDATA\npm\node_modules\npm\node_modules\node-gyp\addon.gypi"
+          $nodeDir = Split-Path -Parent (Get-Command node).Source
+          $candidates = @(
+            (Join-Path $nodeDir 'node_modules\npm\node_modules\node-gyp\addon.gypi'),
+            (Join-Path (npm root -g) 'node-gyp\addon.gypi'),
+            "$env:APPDATA\npm\node_modules\npm\node_modules\node-gyp\addon.gypi"
+          )
+          $patched = $false
+          foreach ($gyp in $candidates) {
+            if (Test-Path $gyp) {
+              $content = Get-Content $gyp -Raw
+              if ($content -match 'node_with_ltcg=="true_DISABLED_qortex_clangcl"') {
+                Write-Host "LTCG block already patched in $gyp"
+                $patched = $true
+              } elseif ($content -match 'node_with_ltcg=="true"') {
+                ($content -replace 'node_with_ltcg=="true"', 'node_with_ltcg=="true_DISABLED_qortex_clangcl"') | Set-Content $gyp -NoNewline
+                Write-Host "Patched LTCG block in $gyp"
+                $patched = $true
+              }
+            }
           }
-          if (Test-Path $gyp) {
-            (Get-Content $gyp) -replace 'node_with_ltcg=="true"', 'node_with_ltcg=="true_DISABLED_qortex_clangcl"' | Set-Content $gyp
-            Write-Host "Patched LTCG block in $gyp"
-          } else {
-            Write-Warning "addon.gypi not found; LTCG workaround skipped (build may fail on tree-sitter)"
+          if (-not $patched) {
+            Write-Error "node-gyp addon.gypi not found; cannot apply LTCG workaround. Searched:`n$($candidates -join "`n")"
+            exit 1
           }
 
       - name: Install dependencies
         run: npm ci
-        env:
-          npm_config_arch: x64
 
       - name: Build + package (${{ matrix.gulp }})
         run: npm run gulp ${{ matrix.gulp }}
