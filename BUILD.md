@@ -1,0 +1,78 @@
+# Building Qortex (editor shell)
+
+This repo is a Code-OSS / `microsoft/vscode` fork. The canonical, reproducible
+build is the CI pipeline in [`.github/workflows/qortex-build.yml`](.github/workflows/qortex-build.yml)
+— read that first; this doc explains the prerequisites and the one non-obvious
+local gotcha (the Windows LTCG patch).
+
+## Prerequisites (all platforms)
+
+- **Node**: the version pinned in [`.nvmrc`](.nvmrc) (currently **24.15.0**). Use
+  `nvm use` / a matching install — other major versions will fail the native builds.
+- **Python 3.11** — required by `node-gyp` for native modules.
+- **~12–15 GB free disk.** Source + `node_modules` + extensions are ~7 GB; the
+  compile/package step spikes another ~5 GB of intermediates. Builds fail in
+  confusing ways (half-built `.node` binaries) if the disk hits zero mid-compile.
+
+## Platform toolchains
+
+### Linux
+```bash
+sudo apt-get install -y \
+  build-essential pkg-config \
+  libx11-dev libxkbfile-dev libsecret-1-dev libkrb5-dev \
+  fakeroot rpm
+```
+
+### macOS
+- Xcode Command Line Tools (`xcode-select --install`).
+
+### Windows
+Install **Visual Studio Build Tools 2022** with these components:
+- `Microsoft.VisualStudio.Component.VC.Tools.x86.x64` (MSVC v14.4x)
+- `Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre` (**Spectre-mitigated libs** — required)
+- `Microsoft.VisualStudio.Component.VC.Llvm.Clang` + `...VC.Llvm.ClangToolset` (**ClangCL** — `tree-sitter` needs it)
+
+> ⚠️ LLVM/ClangCL is large (~9 GB). Combined with the 12–15 GB build need, watch disk.
+
+#### Windows LTCG patch (the non-obvious one)
+
+`node-gyp`'s default Release config passes `/LTCG:INCREMENTAL`, which ClangCL's
+`llvm-lib` rejects — the `tree-sitter` native build fails with a link error. The
+fix is to disable the LTCG block in `node-gyp`'s `addon.gypi`:
+
+- Find the `addon.gypi` of the **node-gyp that npm actually uses** — it's bundled
+  inside npm, at `<node-install-dir>\node_modules\npm\node_modules\node-gyp\addon.gypi`
+  (derive `<node-install-dir>` from `Split-Path (Get-Command node).Source`).
+- Replace the sentinel `node_with_ltcg=="true"` with anything else (e.g.
+  `node_with_ltcg=="true_DISABLED_qortex_clangcl"`) so the LTCG block is skipped.
+
+CI does this automatically (see the *"Windows node-gyp LTCG workaround"* step in
+`qortex-build.yml`). Locally you must apply it **before** `npm ci`/`npm install`.
+
+> **Known wart (tracked in QAM-516):** this patches a file under the machine-global
+> npm install — it is not yet captured in-repo. It is reversible (revert the
+> sentinel). A follow-up should move it into a repo preinstall/gulp step so a clean
+> checkout builds without hand-editing global state.
+
+## Build
+
+```bash
+npm install                          # or `npm ci`
+npm run compile                      # dev build (~6 min); out/ ~200 MB
+./scripts/code.sh                    # launch  (scripts\code.bat on Windows)
+```
+
+Packaged platform bundles (what CI produces):
+```bash
+npm run gulp vscode-linux-x64-min    # | vscode-win32-x64-min | vscode-darwin-arm64-min
+```
+
+### After a disk-zero crash
+If a compile dies at 0 GB, native modules can be left half-built (e.g.
+`policy-watcher`, `spdlog`, `windows-registry`) and only surface as errors at
+launch. Free space, then:
+```bash
+npm rebuild                          # rebuilds all native modules for the Electron ABI
+```
+(The optional `ssh2` crypto `.node` may fail to build — that's safe to ignore.)
