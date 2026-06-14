@@ -416,6 +416,10 @@ export class ChatEntitlementService extends Disposable implements IChatEntitleme
 		}
 
 		if (!productService.defaultChatAgent) {
+			// Qortex (QAM-511): no bundled default chat agent — hide the Copilot
+			// setup UI (Welcome walkthrough card + CHAT aux-bar view), mirroring
+			// the unsupported-web path above.
+			ChatEntitlementContextKeys.Setup.hidden.bindTo(this.contextKeyService).set(true);
 			return; // we need a default chat agent configured going forward from here
 		}
 

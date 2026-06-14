@@ -1175,7 +1175,10 @@ suite('ExtensionEnablementService Test', () => {
 	});
 
 	test('test chat extension is disabled on profile switch when setup is not completed', async () => {
-		const chatExtensionId = productService.defaultChatAgent!.chatExtensionId;
+		if (!productService.defaultChatAgent) {
+			return; // Qortex (QAM-511): no bundled chat agent — this scenario is N/A
+		}
+		const chatExtensionId = productService.defaultChatAgent.chatExtensionId;
 		const chatExtension = aLocalExtension(chatExtensionId, undefined, ExtensionType.System);
 		installed.push(chatExtension);
 

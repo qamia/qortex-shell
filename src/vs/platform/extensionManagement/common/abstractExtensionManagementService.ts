@@ -989,7 +989,10 @@ export abstract class AbstractExtensionManagementService extends CommontExtensio
 		if (checked.indexOf(extension) !== -1) {
 			return [];
 		}
-		if (areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId })) {
+		// Qortex (QAM-511): defaultChatAgent is optional — only shield the bundled
+		// chat agent from pack-uninstall when one is configured.
+		const defaultChatAgentId = this.productService.defaultChatAgent?.extensionId;
+		if (defaultChatAgentId && areSameExtensions(extension.identifier, { id: defaultChatAgentId })) {
 			return [];
 		}
 		checked.push(extension);

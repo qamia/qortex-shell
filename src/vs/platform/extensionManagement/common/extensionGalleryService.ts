@@ -1170,10 +1170,13 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
 
 			const result: IGalleryExtension[] = [];
 			let defaultChatAgentExtension: IGalleryExtension | undefined;
+			// Qortex (QAM-511): defaultChatAgent is optional — only reorder it to the
+			// end of results when one is actually configured (no bundled Copilot).
+			const defaultChatAgentId = this.productService.defaultChatAgent?.extensionId;
 			for (let index = 0; index < extensions.length; index++) {
 				const extension = extensions[index];
 				setTelemetry(extension, ((query.pageNumber - 1) * query.pageSize) + index, options.source);
-				if (areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId, })) {
+				if (defaultChatAgentId && areSameExtensions(extension.identifier, { id: defaultChatAgentId })) {
 					defaultChatAgentExtension = extension;
 				} else {
 					result.push(extension);
@@ -2005,15 +2008,20 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
 			}
 		}
 
-		deprecated[this.productService.defaultChatAgent.extensionId.toLowerCase()] = {
-			disallowInstall: true,
-			extension: {
-				id: this.productService.defaultChatAgent.chatExtensionId,
-				displayName: 'GitHub Copilot Chat',
-				autoMigrate: { storage: false, donotDisable: true },
-				preRelease: this.productService.quality !== 'stable'
-			}
-		};
+		// Qortex (QAM-511): only register the bundled-Copilot deprecation mapping
+		// when a default chat agent is configured (Qortex ships none).
+		const defaultChatAgent = this.productService.defaultChatAgent;
+		if (defaultChatAgent) {
+			deprecated[defaultChatAgent.extensionId.toLowerCase()] = {
+				disallowInstall: true,
+				extension: {
+					id: defaultChatAgent.chatExtensionId,
+					displayName: 'GitHub Copilot Chat',
+					autoMigrate: { storage: false, donotDisable: true },
+					preRelease: this.productService.quality !== 'stable'
+				}
+			};
+		}
 
 		return { malicious, deprecated, search, autoUpdate };
 	}
