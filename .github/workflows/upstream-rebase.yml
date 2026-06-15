@@ -1,13 +1,21 @@
-# Qortex — upstream VS Code rebase maintenance (QAM-491)
+# Qortex — upstream VS Code rebase maintenance (QAM-491, hardened in QAM-512)
 #
 # Running a Code-OSS fork means periodically re-applying our (small) branding
 # patch series onto newer microsoft/vscode releases. This workflow automates the
 # tax: weekly it checks upstream for a newer stable tag and, if found, replays
 # our commits onto it via `git rebase --onto`, then opens a rebase PR (clean) or
-# files an issue (conflicts). See docs/UPSTREAM_REBASE.md for the process.
+# files an issue (conflicts). See docs/UPSTREAM_REBASE.md in the qamia/qortex
+# umbrella repo for the process.
 #
-# The current upstream baseline is tracked in the `qortex-upstream-base.txt` file at
-# the repo root. The workflow bumps it on a successful rebase.
+# INVARIANT: `main` must always be exactly our branding patch series replayed on
+# top of the baseline tag — no merge commits. That is what lets the next cycle
+# compute `BASE..main` as "our patches". Therefore a clean rebase PR is landed by
+# FAST-FORWARDING / force-updating main to the rebase branch tip, NOT by clicking
+# GitHub's "Merge" button (a merge commit poisons the next rebase range). The
+# instructions in the auto-PR body say so.
+#
+# The current upstream baseline is tracked in `qortex-upstream-base.txt` at the
+# repo root. The workflow bumps it on a successful rebase.
 #
 # NOTE: requires repo setting "Allow GitHub Actions to create and approve pull
 # requests" (Settings > Actions > General) for the auto-PR step.
@@ -56,7 +64,12 @@ jobs:
       - name: Determine base + target
         id: tags
         run: |
+          set -euo pipefail
           BASE="$(tr -d '[:space:]' < qortex-upstream-base.txt)"
+          if [ -z "$BASE" ]; then
+            echo "::error::qortex-upstream-base.txt is empty; cannot determine the current baseline."
+            exit 1
+          fi
           if [ -n "${{ inputs.target_tag }}" ]; then
             TARGET="${{ inputs.target_tag }}"
           else
@@ -65,9 +78,24 @@ jobs:
           fi
           echo "base=$BASE"     >> "$GITHUB_OUTPUT"
           echo "target=$TARGET" >> "$GITHUB_OUTPUT"
-          if [ -z "$TARGET" ] || [ "$BASE" = "$TARGET" ]; then
+
+          if [ -z "$TARGET" ]; then
             echo "uptodate=true" >> "$GITHUB_OUTPUT"
-            echo "Already on latest ($BASE); nothing to do."
+            echo "No upstream stable tag found; nothing to do."
+            exit 0
+          fi
+
+          # A dispatched target_tag must actually exist as a tag.
+          if ! git rev-parse -q --verify "refs/tags/${TARGET}^{commit}" >/dev/null; then
+            echo "::error::Requested target tag '${TARGET}' does not exist upstream."
+            exit 1
+          fi
+
+          # Only move forward: skip if TARGET is the same as, or older than, BASE.
+          NEWEST="$(printf '%s\n%s\n' "$BASE" "$TARGET" | sort -V | tail -1)"
+          if [ "$BASE" = "$TARGET" ] || [ "$NEWEST" = "$BASE" ]; then
+            echo "uptodate=true" >> "$GITHUB_OUTPUT"
+            echo "Baseline ${BASE} is already >= target ${TARGET}; nothing to do."
           else
             echo "uptodate=false" >> "$GITHUB_OUTPUT"
             echo "New upstream release: $BASE -> $TARGET"
@@ -77,21 +105,25 @@ jobs:
         if: steps.tags.outputs.uptodate == 'false'
         id: rebase
         run: |
-          set +e
+          set -euo pipefail
           TARGET="${{ steps.tags.outputs.target }}"
           BASE="${{ steps.tags.outputs.base }}"
           BR="rebase/${TARGET}"
           git checkout -B "$BR" origin/main
-          # Replay our commits (BASE..main) onto the new upstream tag.
+          # Replay our commits (BASE..main) onto the new upstream tag. Only the
+          # rebase itself is allowed to fail (conflicts) — everything else is fatal.
+          set +e
           git rebase --onto "$TARGET" "$BASE" "$BR"
-          if [ $? -eq 0 ]; then
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
             # bump the baseline marker on top of the rebased branding
             printf '%s\n' "$TARGET" > qortex-upstream-base.txt
             git add qortex-upstream-base.txt
             git commit -m "chore(rebase): bump upstream base ${BASE} -> ${TARGET}"
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
-            git rebase --abort
+            git rebase --abort || true
             echo "ok=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -100,31 +132,57 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           TARGET="${{ steps.tags.outputs.target }}"
+          BASE="${{ steps.tags.outputs.base }}"
           git push --force-with-lease origin "rebase/${TARGET}"
-          gh pr create \
-            --base main \
-            --head "rebase/${TARGET}" \
-            --title "Rebase onto upstream VS Code ${TARGET}" \
-            --body "Automated rebase of the Qortex branding patch series from \`${{ steps.tags.outputs.base }}\` onto upstream microsoft/vscode \`${TARGET}\`.
+          BODY="Automated rebase of the Qortex branding patch series from \`${BASE}\` onto upstream microsoft/vscode \`${TARGET}\`.
 
-          **Before merging:** run the Qortex Build workflow and smoke-test launch (branding intact, gallery, etc.). The \`qortex-upstream-base.txt\` marker has been bumped to \`${TARGET}\`." \
-            || echo "PR already exists for rebase/${TARGET}"
+          **How to land this (do NOT click \"Merge\"):** \`main\` must stay a clean replay of our patches with no merge commits, or the next rebase range breaks. After review + a green Qortex Build, fast-forward main to this branch:
+
+          \`\`\`
+          git fetch origin
+          git push --force-with-lease origin refs/remotes/origin/rebase/${TARGET}:refs/heads/main
+          \`\`\`
+
+          **Before landing:** run the Qortex Build workflow and smoke-test launch (branding intact, gallery, update feed). The \`qortex-upstream-base.txt\` marker has been bumped to \`${TARGET}\`. The diff below is large because history is re-anchored on a new upstream tag — review the patch series commits, not the file-by-file diff."
+          if ! out="$(gh pr create --base main --head "rebase/${TARGET}" \
+                --title "Rebase onto upstream VS Code ${TARGET}" --body "$BODY" 2>&1)"; then
+            if printf '%s' "$out" | grep -qiE 'already exists|a pull request for branch'; then
+              echo "PR already exists for rebase/${TARGET}"
+            else
+              printf '%s\n' "$out"
+              echo "::error::gh pr create failed (is 'Allow GitHub Actions to create and approve pull requests' enabled?)"
+              exit 1
+            fi
+          else
+            printf '%s\n' "$out"
+          fi
 
       - name: File issue (conflicts)
         if: steps.rebase.outputs.ok == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           TARGET="${{ steps.tags.outputs.target }}"
+          BASE="${{ steps.tags.outputs.base }}"
+          TITLE="Upstream rebase ${BASE} -> ${TARGET} needs manual resolution"
+          # Don't pile up a fresh issue every Monday while a conflict sits unresolved.
+          existing="$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "Issue #${existing} already open for ${BASE} -> ${TARGET}; not duplicating."
+            exit 0
+          fi
           gh issue create \
-            --title "Upstream rebase ${{ steps.tags.outputs.base }} -> ${TARGET} needs manual resolution" \
-            --body "The automated rebase onto upstream VS Code \`${TARGET}\` hit conflicts and was aborted. Resolve manually — see \`docs/UPSTREAM_REBASE.md\`.
+            --title "${TITLE}" \
+            --body "The automated rebase onto upstream VS Code \`${TARGET}\` hit conflicts and was aborted. Resolve manually — see \`docs/UPSTREAM_REBASE.md\` in the qamia/qortex umbrella repo.
 
           \`\`\`
           git fetch --tags upstream
           git checkout -B rebase/${TARGET} origin/main
-          git rebase --onto ${TARGET} ${{ steps.tags.outputs.base }} rebase/${TARGET}
+          git rebase --onto ${TARGET} ${BASE} rebase/${TARGET}
           # resolve conflicts, then: echo ${TARGET} > qortex-upstream-base.txt && git commit -am 'bump base'
-          \`\`\`" \
-            || echo "issue may already exist"
+          # land by fast-forwarding main (NOT a merge commit):
+          #   git push --force-with-lease origin rebase/${TARGET}:main
+          \`\`\`"
