@@ -15,6 +15,7 @@ import { gulp, filter, plumber, sourcemaps } from './lib/gulp/facade.ts';
 import * as path from 'path';
 import * as nodeUtil from 'util';
 import * as ext from './lib/extensions.ts';
+import { extractFenneqVsix } from './lib/fenneq.ts';
 import { getVersion } from './lib/getVersion.ts';
 import { createReporter } from './lib/reporter.ts';
 import * as task from './lib/gulp/task.ts';
@@ -289,6 +290,13 @@ task.task(compileNativeExtensionsBuildTask);
  */
 export const compileCopilotExtensionBuildTask = task.define('compile-copilot-extension-build', () => ext.packageCopilotExtensionStream(false).pipe(gulp.dest('.build')));
 task.task(compileCopilotExtensionBuildTask);
+
+/**
+ * Qortex (QAM-493): materialize the pre-built FenneQ VSIX into .build/extensions/fenneq
+ * so packaging bundles FenneQ as a built-in (System) extension. See build/lib/fenneq.ts.
+ */
+export const compileFenneqExtensionBuildTask = task.define('compile-fenneq-extension-build', () => extractFenneqVsix());
+task.task(compileFenneqExtensionBuildTask);
 
 /**
  * Compiles the extensions for the build.
