@@ -10,7 +10,6 @@ import { isCancellationError } from '../../../../base/common/errors.js';
 import { StopWatch } from '../../../../base/common/stopwatch.js';
 import { URI } from '../../../../base/common/uri.js';
 import { isWindows, isMacintosh, isLinux } from '../../../../base/common/platform.js';
-import { assertDefined } from '../../../../base/common/types.js';
 import { FileAccess } from '../../../../base/common/network.js';
 import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
 import { KeyCode } from '../../../../base/common/keyCodes.js';
@@ -77,8 +76,11 @@ type OnboardingActionEvent = {
 
 type EnterpriseSignInUiState = 'options' | 'instance' | 'progress';
 
-assertDefined(product.defaultChatAgent, 'Onboarding requires a default chat agent product configuration.');
-const defaultChat = product.defaultChatAgent;
+// Qortex (QAM-511): no default chat agent is bundled (FenneQ replaces Copilot).
+// Fall back to an empty config so this module can load; the onboarding service
+// is replaced with a no-op in welcomeOnboarding.contribution.ts in that case.
+// eslint-disable-next-line local/code-no-dangerous-type-assertions
+const defaultChat = product.defaultChatAgent ?? ({} as NonNullable<typeof product.defaultChatAgent>);
 
 /**
  * Variation A — Classic Wizard Modal
