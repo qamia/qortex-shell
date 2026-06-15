@@ -46,7 +46,12 @@ import { GitHubPaths, IDefaultAccountService } from '../../../../../platform/def
 import product from '../../../../../platform/product/common/product.js';
 import { isCompletionsEnabled } from '../../../../../editor/common/services/completionsEnablement.js';
 
-const defaultChat = product.defaultChatAgent;
+// Qortex (QAM-511): defaultChatAgent is optional, but this Copilot status
+// dashboard is only ever instantiated when one is configured — the status-bar
+// entry is gated on `!sentiment.hidden` (chatStatusEntry.ts) and we force
+// Setup.hidden=true when there is no agent (chatEntitlementService.ts). The
+// non-null assertion is therefore safe and keeps upstream's logic untouched.
+const defaultChat = product.defaultChatAgent!;
 
 interface ISettingsAccessor {
 	readSetting: () => boolean;

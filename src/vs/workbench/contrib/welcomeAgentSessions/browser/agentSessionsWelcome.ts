@@ -710,8 +710,9 @@ export class AgentSessionsWelcomePage extends EditorPane {
 			return;
 		}
 
-		const providers = this.productService.defaultChatAgent?.provider;
-		if (!providers || !providers.default || !this.productService.defaultChatAgent?.termsStatementUrl || !this.productService.defaultChatAgent?.privacyStatementUrl) {
+		const defaultChatAgent = this.productService.defaultChatAgent; // Qortex (QAM-511): optional
+		const providers = defaultChatAgent?.provider;
+		if (!providers || !providers.default || !defaultChatAgent?.termsStatementUrl || !defaultChatAgent?.privacyStatementUrl) {
 			return;
 		}
 
@@ -740,8 +741,8 @@ export class AgentSessionsWelcomePage extends EditorPane {
 				{ key: 'tosDescription', comment: ['{Locked="]({1})"}', '{Locked="]({2})"}'] },
 				"By continuing, you agree to {0}'s [Terms]({1}) and [Privacy Statement]({2}).",
 				providers.default.name,
-				this.productService.defaultChatAgent.termsStatementUrl,
-				this.productService.defaultChatAgent.privacyStatementUrl
+				defaultChatAgent.termsStatementUrl,
+				defaultChatAgent.privacyStatementUrl
 			),
 			{ isTrusted: true }
 		);
