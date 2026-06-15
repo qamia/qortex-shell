@@ -8,10 +8,11 @@ This repository contains the **Qortex editor shell**.
 
 ## What makes Qortex different
 
-🤖 **FenneQ — the built-in agentic platform.** Qortex ships with the FenneQ
-agent preinstalled: an autonomous coding agent that plans, edits across files,
-runs commands, and connects to your own knowledge base through the Fenneq MCP
-server. No setup, no extensions to hunt for — it's part of the editor.
+🤖 **FenneQ — the agentic platform at the core.** Qortex is built around the
+FenneQ agent: an autonomous coding agent that plans, edits across files, runs
+commands, and connects to your own knowledge base through the Fenneq MCP server.
+FenneQ is designed to ship bundled as a built-in — the editor *is* the agent,
+not a chatbot bolted on.
 
 ⚡ **Model tiers that match the task.** Pick the intelligence level per job:
 
@@ -48,8 +49,8 @@ lives in the [qamia/qortex](https://github.com/qamia/qortex) monorepo.
 ## Built on open source
 
 Qortex's editor core builds on **Code-OSS**, the MIT-licensed open-source
-project, which we keep current with weekly upstream refreshes — so Qortex
-always benefits from the latest editor improvements, while everything above
+project. We track upstream releases with an automated rebase workflow — so
+Qortex benefits from the latest editor improvements, while everything above
 the editor layer (the agentic platform, the optimization stack, and the
 product direction) is Qamia's own. We're grateful to the open-source community.
 
