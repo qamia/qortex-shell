@@ -306,6 +306,10 @@ export const compileAllExtensionsBuildTask = task.define('compile-extensions-bui
 	cleanExtensionsBuildTask,
 	bundleMarketplaceExtensionsBuildTask,
 	task.define('bundle-extensions-build', () => ext.packageAllLocalExtensionsStream(false, false).pipe(gulp.dest('.build'))),
+	// Qortex (QAM-507): bundle the pre-built FenneQ VSIX as a built-in. Runs LAST so the
+	// preceding clean/bundle steps can't wipe .build/extensions/fenneq. Skips with a
+	// warning if .build/fenneq.vsix is absent, so builds without the VSIX still succeed.
+	compileFenneqExtensionBuildTask,
 ));
 task.task(compileAllExtensionsBuildTask);
 
