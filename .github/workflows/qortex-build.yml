@@ -1,16 +1,25 @@
-# Qortex — cross-platform build & packaging (QAM-490, hardened in QAM-512)
+# Qortex — cross-platform build, packaging, signing & installers (QAM-490/512/507)
 #
-# Produces UNSIGNED Qortex application bundles for Windows, macOS, and Linux by
-# running the upstream VS Code gulp packaging tasks on each platform's runner.
-# This is the reproducible build pipeline; code-signing/notarization + native
-# installers are a separate issue (QAM-507).
+# Pipeline:
+#   1. `agent`  — build the FenneQ agent (qamia/fenneq-agent) into a VSIX so the
+#                 shell packaging bundles it as a built-in (QAM-493/507). Needs the
+#                 FENNEQ_AGENT_TOKEN secret to read the (private) agent repo.
+#   2. `build`  — per-platform: package the app, build native installers, and
+#                 code-sign + (mac) notarize WHEN the signing secrets are present.
+#                 Without secrets it still produces UNSIGNED installers/archives.
 #
-# Triggers are intentionally narrow (manual + the feature branch) so this does
-# not fire on every push or collide with the inherited upstream workflows.
-#
-# The `platforms` dispatch input selects which legs run; a `setup` job expands it
-# into the build matrix (and pins each leg's native build arch — critical so the
-# Apple-silicon leg does not build x64 native modules).
+# ── SECRETS (add on this repo: Settings → Secrets and variables → Actions) ──
+#   FENNEQ_AGENT_TOKEN          fine-grained PAT, read on qamia/fenneq-agent
+#   WINDOWS_CERT_PFX_BASE64     Authenticode cert (.pfx), base64        ┐ Windows
+#   WINDOWS_CERT_PASSWORD       .pfx password                           ┘ signing
+#   APPLE_CERT_P12_BASE64       Developer ID Application (.p12), base64  ┐
+#   APPLE_CERT_PASSWORD         .p12 password                           │ macOS
+#   APPLE_API_KEY_P8_BASE64     App Store Connect API key (.p8), base64 │ sign +
+#   APPLE_API_KEY_ID            API key id                              │ notarize
+#   APPLE_API_ISSUER_ID         API issuer id                           ┘
+# All signing/installer/notarization steps below are SCAFFOLDED but UNVERIFIED
+# (no runners/certs available at authoring time) — expect to iterate on the first
+# real run. Each such step is tagged `# VALIDATE`.
 
 name: Qortex Build
 
@@ -29,19 +38,64 @@ on:
   push:
     branches:
       - feature/qam-490
+      - feature/qam-507-ci-signing
 
 permissions:
   contents: read
 
-# A VS Code build is heavy; don't run duplicate builds for the same ref.
 concurrency:
   group: qortex-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Expand the `platforms` input into a build matrix. Each leg carries `npm_arch`
-  # so native modules are compiled for the bundle's target arch, not the runner's
-  # default (the darwin leg MUST be arm64, never x64).
+  # ── 1. Build the FenneQ agent into a VSIX (platform-independent) ──
+  agent:
+    name: Build FenneQ agent VSIX
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fenneq-agent (qortex-main)
+        uses: actions/checkout@v4
+        with:
+          repository: qamia/fenneq-agent
+          ref: qortex-main
+          token: ${{ secrets.FENNEQ_AGENT_TOKEN }}
+          path: agent
+
+      - name: Setup Node (agent .nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: "agent/.nvmrc"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install agent deps
+        working-directory: agent
+        run: bun install --frozen-lockfile
+
+      - name: Build agent (protos + webview + esbuild)
+        working-directory: agent/apps/vscode
+        run: |
+          npm run protos
+          npm run build:webview
+          node esbuild.mjs --production
+
+      - name: Package VSIX (skip prepublish — outputs already built)
+        working-directory: agent/apps/vscode
+        run: |
+          # vsce runs vscode:prepublish (= `npm run package`, whose lint/check-types
+          # are heavier + can shell out); neutralize it since dist/ + webview are built.
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.scripts['vscode:prepublish']='node --version';fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
+          ./node_modules/.bin/vsce package --no-dependencies --skip-license --out fenneq.vsix
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fenneq-vsix
+          path: agent/apps/vscode/fenneq.vsix
+          if-no-files-found: error
+          retention-days: 14
+
   setup:
     name: Select platforms
     runs-on: ubuntu-latest
@@ -64,70 +118,15 @@ jobs:
           esac
           echo "matrix={\"include\":[$inc]}" >> "$GITHUB_OUTPUT"
 
-  # Build the FenneQ agent VSIX once and share it with every platform leg (QAM-507).
-  # The agent is a JS + webview bundle (no per-platform native code), so a single
-  # Linux build serves all three OSes. It lives in a SEPARATE repo (qamia/fenneq-agent),
-  # so we check it out here, build it, and `vsce package` it. The shell build then
-  # extracts .build/fenneq.vsix into the bundled built-in via compile-extensions-build.
-  # Without this artifact the shell packages with NO agent (the extract task skips).
-  build-agent:
-    name: Build FenneQ agent VSIX
-    needs: setup
-    runs-on: ubuntu-latest
-    steps:
-      # NOTE: fenneq-agent is private → needs a read-scoped PAT/App-token secret
-      # (FENNEQ_AGENT_TOKEN). For a fully reproducible build, pin `ref` to the
-      # extension submodule commit the monorepo points at instead of the branch tip.
-      - name: Checkout fenneq-agent (qortex-main)
-        uses: actions/checkout@v4
-        with:
-          repository: qamia/fenneq-agent
-          ref: qortex-main
-          token: ${{ secrets.FENNEQ_AGENT_TOKEN }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Setup bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install + build agent
-        run: |
-          bun install
-          cd apps/vscode
-          npm run protos
-          npm run build:webview
-          node esbuild.mjs --production
-
-      - name: Package VSIX (.build/fenneq.vsix)
-        working-directory: apps/vscode
-        run: |
-          # vsce runs vscode:prepublish (= `npm run package`, which lints/typechecks and
-          # on some setups shells out to a non-portable tool). We already produced
-          # dist/ + webview-ui/build above, so neutralize prepublish and just zip them.
-          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));if(p.scripts){p.scripts['vscode:prepublish']='node --version'}fs.writeFileSync('package.json',JSON.stringify(p,null,'\t'))"
-          npx @vscode/vsce package --no-dependencies --skip-license --out "$GITHUB_WORKSPACE/fenneq.vsix"
-
-      - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: fenneq-vsix
-          path: fenneq.vsix
-          if-no-files-found: error
-          retention-days: 14
-
   build:
     name: ${{ matrix.label }}
-    needs: [setup, build-agent]
+    needs: [setup, agent]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     env:
-      # Compile native modules for the bundle's target arch (not the runner host).
       npm_config_arch: ${{ matrix.npm_arch }}
 
     steps:
@@ -145,7 +144,17 @@ jobs:
         with:
           python-version: "3.11"
 
-      # --- Linux: native-module build deps (X11, keyring, kerberos, packaging) ---
+      # Materialize the FenneQ agent VSIX where the gulp build expects it
+      # (.build/fenneq.vsix → extractFenneqVsix → bundled built-in).
+      - name: Download FenneQ agent VSIX
+        uses: actions/download-artifact@v4
+        with:
+          name: fenneq-vsix
+          path: .build
+      - name: Place VSIX at .build/fenneq.vsix
+        shell: bash
+        run: test -f .build/fenneq.vsix || mv .build/*.vsix .build/fenneq.vsix
+
       - name: Linux build deps
         if: runner.os == 'Linux'
         run: |
@@ -155,8 +164,6 @@ jobs:
             libx11-dev libxkbfile-dev libsecret-1-dev libkrb5-dev \
             fakeroot rpm
 
-      # --- Windows: add ClangCL + Spectre-mitigated libs (tree-sitter needs ClangCL) ---
-      # GitHub's windows-latest ships VS 2022; ensure the components we hit locally.
       - name: Windows VS C++ components (ClangCL + Spectre)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -174,11 +181,6 @@ jobs:
           Start-Process -FilePath $vsInstaller -ArgumentList $vsArgs -Wait -NoNewWindow
         continue-on-error: true
 
-      # --- Windows: LTCG workaround ---
-      # node-gyp's default Release config passes /LTCG:INCREMENTAL, which ClangCL's
-      # llvm-lib rejects (breaks tree-sitter). Disable the LTCG block in the
-      # node-gyp bundled inside the runner's npm. Fail loudly if it can't be found
-      # — a silent skip resurfaces as a confusing tree-sitter link error later.
       - name: Windows node-gyp LTCG workaround
         if: runner.os == 'Windows'
         shell: pwsh
@@ -194,55 +196,119 @@ jobs:
             if (Test-Path $gyp) {
               $content = Get-Content $gyp -Raw
               if ($content -match 'node_with_ltcg=="true_DISABLED_qortex_clangcl"') {
-                Write-Host "LTCG block already patched in $gyp"
-                $patched = $true
+                Write-Host "LTCG block already patched in $gyp"; $patched = $true
               } elseif ($content -match 'node_with_ltcg=="true"') {
                 ($content -replace 'node_with_ltcg=="true"', 'node_with_ltcg=="true_DISABLED_qortex_clangcl"') | Set-Content $gyp -NoNewline
-                Write-Host "Patched LTCG block in $gyp"
-                $patched = $true
+                Write-Host "Patched LTCG block in $gyp"; $patched = $true
               }
             }
           }
           if (-not $patched) {
-            Write-Error "node-gyp addon.gypi not found; cannot apply LTCG workaround. Searched:`n$($candidates -join "`n")"
-            exit 1
+            Write-Error "node-gyp addon.gypi not found; cannot apply LTCG workaround.`n$($candidates -join "`n")"; exit 1
           }
 
       - name: Install dependencies
         run: npm ci
 
-      # Pull the agent VSIX built by the build-agent job into .build/ so the gulp
-      # packaging (compile-extensions-build → extractFenneqVsix) bundles FenneQ as
-      # a built-in. Lands at .build/fenneq.vsix.
-      - name: Download FenneQ agent VSIX
-        uses: actions/download-artifact@v4
-        with:
-          name: fenneq-vsix
-          path: .build
-
       - name: Build + package (${{ matrix.gulp }})
         run: npm run gulp ${{ matrix.gulp }}
 
-      # --- Archive the produced app bundle (output dir is created in the parent dir) ---
-      - name: Archive (Linux/macOS)
+      # ── Code-sign the app (only when signing secrets are present) ──
+      - name: Sign app — Windows  # VALIDATE
+        if: runner.os == 'Windows' && env.WINDOWS_CERT_PFX_BASE64 != ''
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+          $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1).FullName
+          # Sign the main exe (a full release would also sign bundled exes/dlls).
+          & $signtool sign /f "$env:RUNNER_TEMP\cert.pfx" /p $env:WINDOWS_CERT_PASSWORD `
+            /fd sha256 /tr http://timestamp.digicert.com /td sha256 "..\${{ matrix.out }}\Qortex.exe"
+
+      - name: Sign app — macOS  # VALIDATE
+        if: runner.os == 'macOS' && env.APPLE_CERT_P12_BASE64 != ''
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          echo "$APPLE_CERT_P12_BASE64" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "" "$KEYCHAIN"
+          security set-keychain-settings "$KEYCHAIN"
+          security unlock-keychain -p "" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KEYCHAIN"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application/{print $2; exit}')
+          codesign --deep --force --options runtime --timestamp --sign "$IDENTITY" "../${{ matrix.out }}/Qortex.app"
+
+      # ── Build native installers ──
+      - name: Installer — Windows (Inno Setup)  # VALIDATE
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          npm run gulp vscode-win32-x64-user-setup
+          # Inno output dir is .build/win32-x64/user-setup — sign the produced setup exe if we have a cert.
+          $setup = Get-ChildItem ".build\win32-x64\user-setup\*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($setup -and "${{ secrets.WINDOWS_CERT_PFX_BASE64 }}") {
+            $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1).FullName
+            & $signtool sign /f "$env:RUNNER_TEMP\cert.pfx" /p "${{ secrets.WINDOWS_CERT_PASSWORD }}" /fd sha256 /tr http://timestamp.digicert.com /td sha256 $setup.FullName
+          }
+          if ($setup) { Copy-Item $setup.FullName "QortexSetup-${{ matrix.label }}.exe" }
+
+      - name: Installer — Linux (deb + rpm)  # VALIDATE
+        if: runner.os == 'Linux'
+        run: |
+          npm run gulp vscode-linux-x64-build-deb || echo "deb build failed (validate task name/output)"
+          npm run gulp vscode-linux-x64-build-rpm || echo "rpm build failed (validate task name/output)"
+          # Collect produced packages (paths under .build/linux — validate).
+          find .build/linux -name '*.deb' -o -name '*.rpm' 2>/dev/null | while read f; do cp "$f" .; done || true
+
+      - name: Installer + notarize — macOS (DMG)  # VALIDATE
+        if: runner.os == 'macOS'
+        env:
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          npx --yes create-dmg "../${{ matrix.out }}/Qortex.app" . || echo "create-dmg failed (validate)"
+          DMG=$(ls *.dmg 2>/dev/null | head -1)
+          if [ -n "$DMG" ] && [ -n "$APPLE_API_KEY_P8_BASE64" ]; then
+            echo "$APPLE_API_KEY_P8_BASE64" | base64 -d > "$RUNNER_TEMP/key.p8"
+            xcrun notarytool submit "$DMG" --key "$RUNNER_TEMP/key.p8" \
+              --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --wait
+            xcrun stapler staple "$DMG"
+            mv "$DMG" "Qortex-${{ matrix.label }}.dmg"
+          elif [ -n "$DMG" ]; then
+            mv "$DMG" "Qortex-${{ matrix.label }}.dmg"
+          fi
+
+      # ── Fallback archive of the raw app bundle (always) ──
+      - name: Archive app (non-Windows)
         if: runner.os != 'Windows'
         run: |
           test -d "../${{ matrix.out }}" || { echo "build output ../${{ matrix.out }} not found"; ls -la ..; exit 1; }
           tar -czf "qortex-${{ matrix.label }}.tar.gz" -C .. "${{ matrix.out }}"
-
-      - name: Archive (Windows)
+      - name: Archive app (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           if (-not (Test-Path "..\${{ matrix.out }}")) { Get-ChildItem ..; throw "build output ..\${{ matrix.out }} not found" }
           Compress-Archive -Path "..\${{ matrix.out }}\*" -DestinationPath "qortex-${{ matrix.label }}.zip" -Force
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: qortex-${{ matrix.label }}
           path: |
+            QortexSetup-${{ matrix.label }}.exe
+            Qortex-${{ matrix.label }}.dmg
+            *.deb
+            *.rpm
             qortex-${{ matrix.label }}.tar.gz
             qortex-${{ matrix.label }}.zip
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
