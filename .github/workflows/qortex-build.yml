@@ -64,9 +64,63 @@ jobs:
           esac
           echo "matrix={\"include\":[$inc]}" >> "$GITHUB_OUTPUT"
 
+  # Build the FenneQ agent VSIX once and share it with every platform leg (QAM-507).
+  # The agent is a JS + webview bundle (no per-platform native code), so a single
+  # Linux build serves all three OSes. It lives in a SEPARATE repo (qamia/fenneq-agent),
+  # so we check it out here, build it, and `vsce package` it. The shell build then
+  # extracts .build/fenneq.vsix into the bundled built-in via compile-extensions-build.
+  # Without this artifact the shell packages with NO agent (the extract task skips).
+  build-agent:
+    name: Build FenneQ agent VSIX
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      # NOTE: fenneq-agent is private → needs a read-scoped PAT/App-token secret
+      # (FENNEQ_AGENT_TOKEN). For a fully reproducible build, pin `ref` to the
+      # extension submodule commit the monorepo points at instead of the branch tip.
+      - name: Checkout fenneq-agent (qortex-main)
+        uses: actions/checkout@v4
+        with:
+          repository: qamia/fenneq-agent
+          ref: qortex-main
+          token: ${{ secrets.FENNEQ_AGENT_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install + build agent
+        run: |
+          bun install
+          cd apps/vscode
+          npm run protos
+          npm run build:webview
+          node esbuild.mjs --production
+
+      - name: Package VSIX (.build/fenneq.vsix)
+        working-directory: apps/vscode
+        run: |
+          # vsce runs vscode:prepublish (= `npm run package`, which lints/typechecks and
+          # on some setups shells out to a non-portable tool). We already produced
+          # dist/ + webview-ui/build above, so neutralize prepublish and just zip them.
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));if(p.scripts){p.scripts['vscode:prepublish']='node --version'}fs.writeFileSync('package.json',JSON.stringify(p,null,'\t'))"
+          npx @vscode/vsce package --no-dependencies --skip-license --out "$GITHUB_WORKSPACE/fenneq.vsix"
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fenneq-vsix
+          path: fenneq.vsix
+          if-no-files-found: error
+          retention-days: 14
+
   build:
     name: ${{ matrix.label }}
-    needs: setup
+    needs: [setup, build-agent]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
@@ -156,6 +210,15 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Pull the agent VSIX built by the build-agent job into .build/ so the gulp
+      # packaging (compile-extensions-build → extractFenneqVsix) bundles FenneQ as
+      # a built-in. Lands at .build/fenneq.vsix.
+      - name: Download FenneQ agent VSIX
+        uses: actions/download-artifact@v4
+        with:
+          name: fenneq-vsix
+          path: .build
 
       - name: Build + package (${{ matrix.gulp }})
         run: npm run gulp ${{ matrix.gulp }}
