@@ -35,10 +35,9 @@ on:
           - linux
           - win
           - mac
-  push:
-    branches:
-      - feature/qam-490
-      - feature/qam-507-ci-signing
+  # Manual-dispatch only. (Removed the dev-era push triggers on
+  # feature/qam-490 + feature/qam-507-ci-signing — they fired stray build
+  # runs / failure emails on every push to those branches.)
 
 permissions:
   contents: read
