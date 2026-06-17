@@ -68,21 +68,32 @@ jobs:
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          # Pin to the version declared in the agent's root package.json
+          # ("packageManager": "bun@1.3.13"). setup-bun otherwise pulls the
+          # latest (1.3.14), whose monorepo hoisting left workspace deps where
+          # plain `node` couldn't resolve them (ERR_MODULE_NOT_FOUND: chalk).
+          bun-version: "1.3.13"
 
       - name: Install agent deps
         working-directory: agent
-        # NOT --frozen-lockfile: the committed bun.lock can lag package.json
-        # (e.g. `chalk`, used by scripts/build-proto.mjs), and a frozen install
-        # then silently omits it → "Cannot find package 'chalk'". A plain install
-        # resolves the full tree from package.json. (CI checkout is ephemeral.)
+        # NOT --frozen-lockfile: the committed bun.lock can lag package.json;
+        # a plain install resolves the full tree (CI checkout is ephemeral).
         run: bun install
 
       - name: Build agent (protos + webview + esbuild)
         working-directory: agent/apps/vscode
+        # This is a BUN monorepo — run the build scripts under `bun`, not `node`/
+        # `npm`. bun resolves workspace deps (chalk, grpc-tools, ts-proto, globby)
+        # reliably; plain `node` ESM resolution can't find hoisted workspace deps.
+        # webview-ui is a nested package (NOT a root workspace), so install it.
         run: |
-          npm run protos
-          npm run build:webview
-          node esbuild.mjs --production
+          echo "::group::node_modules layout (chalk)"
+          ls -la node_modules/chalk ../../node_modules/chalk 2>&1 | head -4 || true
+          echo "::endgroup::"
+          bun scripts/build-proto.mjs
+          ( cd webview-ui && bun install && bun run build )
+          bun esbuild.mjs --production
 
       - name: Package VSIX (skip prepublish — outputs already built)
         working-directory: agent/apps/vscode
@@ -90,7 +101,11 @@ jobs:
           # vsce runs vscode:prepublish (= `npm run package`, whose lint/check-types
           # are heavier + can shell out); neutralize it since dist/ + webview are built.
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.scripts['vscode:prepublish']='node --version';fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
-          ./node_modules/.bin/vsce package --no-dependencies --skip-license --out fenneq.vsix
+          # vsce may be hoisted to the monorepo-root .bin (bun), so try local then root.
+          VSCE=./node_modules/.bin/vsce
+          [ -x "$VSCE" ] || VSCE=../../node_modules/.bin/vsce
+          [ -x "$VSCE" ] || VSCE="bunx @vscode/vsce"
+          $VSCE package --no-dependencies --skip-license --out fenneq.vsix
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
