@@ -71,7 +71,11 @@ jobs:
 
       - name: Install agent deps
         working-directory: agent
-        run: bun install --frozen-lockfile
+        # NOT --frozen-lockfile: the committed bun.lock can lag package.json
+        # (e.g. `chalk`, used by scripts/build-proto.mjs), and a frozen install
+        # then silently omits it → "Cannot find package 'chalk'". A plain install
+        # resolves the full tree from package.json. (CI checkout is ephemeral.)
+        run: bun install
 
       - name: Build agent (protos + webview + esbuild)
         working-directory: agent/apps/vscode
