@@ -82,14 +82,15 @@ jobs:
 
       - name: Build agent (protos + webview + esbuild)
         working-directory: agent/apps/vscode
-        # This is a BUN monorepo — run the build scripts under `bun`, not `node`/
-        # `npm`. bun resolves workspace deps (chalk, grpc-tools, ts-proto, globby)
-        # reliably; plain `node` ESM resolution can't find hoisted workspace deps.
-        # webview-ui is a nested package (NOT a root workspace), so install it.
+        # apps/vscode is EXCLUDED from the agent's root bun workspaces
+        # ("workspaces": [..., "!apps/vscode", ...]), so the root `bun install`
+        # never installs its deps (chalk, grpc-tools, ts-proto, globby). It must
+        # be installed on its own — that's why every prior fix (bun version,
+        # non-frozen, run-under-bun) failed: the package was simply never installed.
+        # webview-ui is likewise a nested non-workspace package.
+        # Run build scripts under `bun` (resolves the deps reliably vs plain node).
         run: |
-          echo "::group::node_modules layout (chalk)"
-          ls -la node_modules/chalk ../../node_modules/chalk 2>&1 | head -4 || true
-          echo "::endgroup::"
+          bun install
           bun scripts/build-proto.mjs
           ( cd webview-ui && bun install && bun run build )
           bun esbuild.mjs --production
