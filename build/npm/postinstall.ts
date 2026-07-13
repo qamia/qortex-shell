@@ -88,7 +88,24 @@ async function npmInstallAsync(dir: string, opts?: child_process.SpawnOptions): 
 		run('sudo', ['chown', '-R', `${userinfo.uid}:${userinfo.gid}`, `${path.resolve(root, dir)}`], syncOpts);
 	} else {
 		log(dir, 'Installing dependencies...');
-		const output = await spawnAsync(npm, command.split(' '), finalOpts);
+		// Child npm processes intermittently hard-crash on hosted Windows CI
+		// runners (exit 3221226505 / 0xC0000409 fail-fast, seen repeatedly in the
+		// parallel installs on windows-2022). `npm ci`/`install` is idempotent per
+		// directory, so retry the crashed directory instead of failing the build.
+		const maxAttempts = 3;
+		let output = '';
+		for (let attempt = 1; ; attempt++) {
+			try {
+				output = await spawnAsync(npm, command.split(' '), finalOpts);
+				break;
+			} catch (err) {
+				if (attempt >= maxAttempts) {
+					throw err;
+				}
+				log(dir, `Install attempt ${attempt} failed (${(err as Error).message.split('\n')[0]}); retrying...`);
+				await new Promise<void>(resolve => setTimeout(resolve, 5000));
+			}
+		}
 		if (output.trim()) {
 			for (const line of output.trim().split('\n')) {
 				log(dir, line);
