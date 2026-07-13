@@ -153,6 +153,11 @@ jobs:
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     env:
       npm_config_arch: ${{ matrix.npm_arch }}
+      # @vscode/ripgrep (and other postinstalls) download prebuilt binaries via the
+      # GitHub API; anonymous requests from shared runner IPs hit the 60/hr rate
+      # limit (run #7: darwin died with repeated GETs to microsoft/ripgrep-prebuilt).
+      # The workflow token raises this to 5000/hr per run.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout
