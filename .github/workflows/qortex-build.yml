@@ -240,6 +240,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # patchWin32DependenciesTask (chained inside vscode-win32-*-min) runs
+      # `signtool.exe verify /pa` — a signature CHECK, no cert needed — but
+      # signtool lives in the Windows SDK, which isn't on PATH on hosted runners
+      # (run #8: "spawn signtool.exe ENOENT" AFTER package-win32-x64 finished).
+      # Microsoft's own pipeline prepends the SDK bin dir for exactly this task;
+      # glob the newest SDK version rather than hard-coding one.
+      - name: Add Windows SDK signtool to PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe not found in any Windows SDK under Windows Kits\10\bin" }
+          Write-Host "signtool: $($signtool.FullName)"
+          Add-Content $env:GITHUB_PATH $signtool.DirectoryName
+
       - name: Build + package (${{ matrix.gulp }})
         run: npm run gulp ${{ matrix.gulp }}
 
