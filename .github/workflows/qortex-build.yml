@@ -306,6 +306,11 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
+          # code.iss [Files] requires tools\* (inno_updater.exe) in the built app
+          # dir; the inno-updater task creates it (MS's pipeline runs it right
+          # after the min build). Run #10 failed without it: "No files found
+          # matching ...VSCode-win32-x64\tools\*".
+          npm run gulp vscode-win32-x64-inno-updater
           npm run gulp vscode-win32-x64-user-setup
           # Inno output dir is .build/win32-x64/user-setup — sign the produced setup exe if we have a cert.
           $setup = Get-ChildItem ".build\win32-x64\user-setup\*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
