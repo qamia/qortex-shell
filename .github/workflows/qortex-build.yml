@@ -127,7 +127,13 @@ jobs:
         run: |
           sel="${{ github.event.inputs.platforms || 'all' }}"
           linux='{"os":"ubuntu-latest","label":"linux-x64","gulp":"vscode-linux-x64-min","out":"VSCode-linux-x64","npm_arch":"x64"}'
-          win='{"os":"windows-latest","label":"win32-x64","gulp":"vscode-win32-x64-min","out":"VSCode-win32-x64","npm_arch":"x64"}'
+          # windows-2022 (NOT windows-latest): windows-latest now maps to the
+          # windows-2025-vs2026 image, which ships ONLY Visual Studio 2026 —
+          # build/npm/preinstall.ts (and node-gyp) require VS 2022/2019, so the
+          # toolchain check fails ("Invalid C/C++ Compiler Toolchain", run #6).
+          # Revisit when windows-2022 is retired: either install VS2022 BuildTools
+          # in a step, or teach preinstall.ts + node-gyp about VS 2026.
+          win='{"os":"windows-2022","label":"win32-x64","gulp":"vscode-win32-x64-min","out":"VSCode-win32-x64","npm_arch":"x64"}'
           mac='{"os":"macos-latest","label":"darwin-arm64","gulp":"vscode-darwin-arm64-min","out":"VSCode-darwin-arm64","npm_arch":"arm64"}'
           case "$sel" in
             linux) inc="$linux" ;;
