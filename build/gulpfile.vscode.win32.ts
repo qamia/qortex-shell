@@ -111,12 +111,17 @@ function buildWin32Setup(arch: string, target: string): task.CallbackTask {
 			Quality: quality
 		};
 
-		if (quality === 'stable' || quality === 'insider') {
+		// Only define the Appx/Explorer-context-menu inputs when the product ships
+		// them (product.win32ContextMenu) — mirrors the packaging-side guard in
+		// gulpfile.vscode.ts. Qortex has no win32ContextMenu, so no .appx is ever
+		// built; without this guard code.iss's `#ifdef AppxPackageName` [Files]
+		// entries compile in and fail on the missing appx\code_x64.appx (run #11).
+		const ctxMenu = (product as { win32ContextMenu?: Record<string, { clsid: string }> }).win32ContextMenu;
+		if ((quality === 'stable' || quality === 'insider') && ctxMenu) {
 			definitions['AppxPackage'] = `${quality === 'stable' ? 'code' : 'code_insider'}_${arch}.appx`;
 			definitions['AppxPackageDll'] = `${quality === 'stable' ? 'code' : 'code_insider'}_explorer_command_${arch}.dll`;
 			definitions['AppxPackageName'] = `${product.win32AppUserModelId}`;
-			const ctxMenu = (product as { win32ContextMenu?: Record<string, { clsid: string }> }).win32ContextMenu;
-			if (ctxMenu && ctxMenu[arch]) {
+			if (ctxMenu[arch]) {
 				definitions['FileExplorerContextMenuCLSID'] = ctxMenu[arch].clsid;
 			}
 		}
