@@ -1672,7 +1672,11 @@ configurationRegistry.registerConfiguration({
 		[ChatConfiguration.AIDisabled]: {
 			type: 'boolean',
 			description: nls.localize('chat.disableAIFeatures', "Disable and hide built-in AI features provided by GitHub Copilot, including chat and inline suggestions."),
-			default: false,
+			// Qortex: default ON — the built-in Chat surfaces (aux-bar "Build with
+			// Agent" view, agents banner, title-bar entries) are upstream Copilot
+			// plumbing; FenneQ (the bundled sidebar agent) is the product's single
+			// agent surface. Users can still flip this setting manually.
+			default: true,
 			scope: ConfigurationScope.WINDOW,
 		},
 		[ChatConfiguration.TitleBarSignInEnabled]: {
