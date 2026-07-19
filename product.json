@@ -33,6 +33,7 @@
 	"reportIssueUrl": "https://github.com/qamia/qortex/issues/new",
 	"nodejsRepository": "https://nodejs.org",
 	"urlProtocol": "qortex",
+	"trustedExtensionProtocolHandlers": ["saoudrizwan.claude-dev"],
 	"extensionsGallery": {
 		"serviceUrl": "https://open-vsx.org/vscode/gallery",
 		"itemUrl": "https://open-vsx.org/vscode/item",
