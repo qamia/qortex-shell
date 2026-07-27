@@ -936,7 +936,10 @@ export class GettingStartedPage extends EditorPane {
 		const gettingStartedList = this.buildGettingStartedWalkthroughsList();
 
 		const footerChildren: HTMLElement[] = [];
-		if (canShowAgentsBanner(this.chatEntitlementService)) {
+		// The sentiment context keys behind canShowAgentsBanner are only maintained
+		// by the chat-setup machinery, which chat.disableAIFeatures turns off — so
+		// consult the setting directly as well.
+		if (this.configurationService.getValue('chat.disableAIFeatures') !== true && canShowAgentsBanner(this.chatEntitlementService)) {
 			const agentsBanner = createAgentsBanner(
 				{
 					cssClass: 'getting-started-category.agents-banner',

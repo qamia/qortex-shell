@@ -159,24 +159,20 @@ jobs:
             printf '%s\n' "$out"
           fi
 
-      - name: File issue (conflicts)
+      - name: Report conflicts
         if: steps.rebase.outputs.ok == 'false'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # GITHUB_TOKEN is capped to read-only in forked repos regardless of the
+          # workflow's `permissions:` block, so issue filing only works when a
+          # real token is provided; otherwise we fall back to the run's own
+          # error annotation + step summary (always writable).
+          GH_TOKEN: ${{ secrets.UPSTREAM_REBASE_TOKEN || github.token }}
         run: |
           set -euo pipefail
           TARGET="${{ steps.tags.outputs.target }}"
           BASE="${{ steps.tags.outputs.base }}"
           TITLE="Upstream rebase ${BASE} -> ${TARGET} needs manual resolution"
-          # Don't pile up a fresh issue every Monday while a conflict sits unresolved.
-          existing="$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty')"
-          if [ -n "$existing" ]; then
-            echo "Issue #${existing} already open for ${BASE} -> ${TARGET}; not duplicating."
-            exit 0
-          fi
-          gh issue create \
-            --title "${TITLE}" \
-            --body "The automated rebase onto upstream VS Code \`${TARGET}\` hit conflicts and was aborted. Resolve manually — see \`docs/UPSTREAM_REBASE.md\` in the qamia/qortex umbrella repo.
+          BODY="The automated rebase onto upstream VS Code \`${TARGET}\` hit conflicts and was aborted. Resolve manually — see \`docs/UPSTREAM_REBASE.md\` in the qamia/qortex umbrella repo.
 
           \`\`\`
           git fetch --tags upstream
@@ -186,3 +182,26 @@ jobs:
           # land by fast-forwarding main (NOT a merge commit):
           #   git push --force-with-lease origin rebase/${TARGET}:main
           \`\`\`"
+
+          # Always surface the conflict in the run itself.
+          {
+            echo "## :rotating_light: ${TITLE}"
+            echo
+            echo "${BODY}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Best effort: file (or dedupe) a tracking issue when the token allows it.
+          if existing="$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty' 2>/dev/null)"; then
+            if [ -n "$existing" ]; then
+              echo "Issue #${existing} already open for ${BASE} -> ${TARGET}; not duplicating."
+              exit 1
+            fi
+            if gh issue create --title "${TITLE}" --body "${BODY}"; then
+              echo "Tracking issue filed."
+            else
+              echo "::warning::Could not file the tracking issue (token is read-only in forks; set the UPSTREAM_REBASE_TOKEN secret to enable it)."
+            fi
+          fi
+
+          echo "::error::${TITLE} — see the step summary for the manual steps."
+          exit 1
