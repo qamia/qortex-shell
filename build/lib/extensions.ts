@@ -315,6 +315,32 @@ const excludedExtensions = [
 	'vscode-test-resolver',
 	'ms-vscode.node-debug',
 	'ms-vscode.node-debug2',
+
+	// Qortex: this is an optimization-consulting appliance, not a code editor.
+	// Programming-language support and developer tooling are dead weight here:
+	// they add ~28 MB, ~50 manifests scanned at every extension-host start, and
+	// (typescript-language-features) a tsserver process on any JS/JSON file.
+	// FenneQ still reads and writes data files; that needs no language pack.
+	// Keep: markdown/math/mermaid (skills output), json + configuration-editing
+	// (settings), search-result, media-preview, themes.
+
+	// Language grammars + language services
+	'bat', 'clojure', 'coffeescript', 'cpp', 'csharp', 'css', 'css-language-features',
+	'dart', 'diff', 'docker', 'fsharp', 'go', 'groovy', 'handlebars', 'hlsl',
+	'html', 'html-language-features', 'ini', 'java', 'javascript', 'julia', 'latex',
+	'less', 'lua', 'make', 'objective-c', 'perl', 'php', 'php-language-features',
+	'powershell', 'pug', 'python', 'r', 'razor', 'restructuredtext', 'ruby', 'rust',
+	'scss', 'shaderlab', 'shellscript', 'sql', 'swift', 'typescript-basics',
+	'typescript-language-features', 'vb', 'xml', 'yaml',
+	'emmet', // HTML/CSS abbreviation expansion
+
+	// Notebooks (Jupyter authoring is a coding workflow)
+	'ipynb', 'notebook-renderers',
+
+	// Developer tooling
+	'git', 'git-base', 'github', 'github-authentication', 'microsoft-authentication',
+	'grunt', 'gulp', 'jake', 'npm', 'merge-conflict', 'references-view',
+	'debug-auto-launch', 'debug-server-ready', 'terminal-suggest', 'tunnel-forwarding',
 ];
 
 const marketplaceWebExtensionsExclude = new Set([
