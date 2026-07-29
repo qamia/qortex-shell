@@ -32,6 +32,7 @@ import { IRawChatParticipantContribution } from '../common/participants/chatPart
 import { ChatAgentLocation, ChatModeKind } from '../common/constants.js';
 import { ChatViewId, ChatViewContainerId } from './chat.js';
 import { ChatViewPane } from './widgetHosts/viewPane/chatViewPane.js';
+import product from '../../../../platform/product/common/product.js';
 
 // --- Chat Container &  View Registration
 
@@ -80,7 +81,14 @@ const chatViewDescriptor: IViewDescriptor = {
 		)
 	)
 };
-Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([chatViewDescriptor], chatViewContainer);
+// Qortex (QAM-511 follow-up): without a bundled default chat agent there is
+// nothing this view can ever connect to — its ChatWidget welcome ("Build with
+// Agent") renders without any context-key gate, so the only reliable way to
+// keep the surface out of the product is to not register the view at all.
+// The container above stays registered and disappears via hideIfEmpty.
+if (product.defaultChatAgent) {
+	Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([chatViewDescriptor], chatViewContainer);
+}
 
 const chatParticipantExtensionPoint = extensionsRegistry.ExtensionsRegistry.registerExtensionPoint<IRawChatParticipantContribution[]>({
 	extensionPoint: 'chatParticipants',

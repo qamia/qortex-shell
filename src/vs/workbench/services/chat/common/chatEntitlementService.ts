@@ -348,6 +348,13 @@ export class ChatEntitlementService extends Disposable implements IChatEntitleme
 	readonly context: Lazy<ChatEntitlementContext> | undefined;
 	readonly requests: Lazy<ChatEntitlementRequests> | undefined;
 
+	// Qortex (QAM-511 follow-up): true when chat surfaces are hidden for product
+	// reasons (no defaultChatAgent, unsupported web). setForceHidden() must never
+	// un-hide in that case — AccountPolicyGateContribution calls it with `false`
+	// whenever no account policy gate is active, which would otherwise clobber
+	// the hidden context key back to visible.
+	private hiddenByProduct = false;
+
 	constructor(
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IProductService productService: IProductService,
@@ -411,6 +418,7 @@ export class ChatEntitlementService extends Disposable implements IChatEntitleme
 		this.sentimentObs = observableFromEvent(this.onDidChangeSentiment, () => this.sentiment);
 
 		if ((isWeb && !environmentService.remoteAuthority && !environmentService.isSessionsWindow)) {
+			this.hiddenByProduct = true;
 			ChatEntitlementContextKeys.Setup.hidden.bindTo(this.contextKeyService).set(true); // hide copilot UI on web if unsupported
 			return;
 		}
@@ -419,6 +427,7 @@ export class ChatEntitlementService extends Disposable implements IChatEntitleme
 			// Qortex (QAM-511): no bundled default chat agent — hide the Copilot
 			// setup UI (Welcome walkthrough card + CHAT aux-bar view), mirroring
 			// the unsupported-web path above.
+			this.hiddenByProduct = true;
 			ChatEntitlementContextKeys.Setup.hidden.bindTo(this.contextKeyService).set(true);
 			return; // we need a default chat agent configured going forward from here
 		}
@@ -690,8 +699,9 @@ export class ChatEntitlementService extends Disposable implements IChatEntitleme
 			this.context.value.setForceHidden(hidden);
 		} else {
 			// No ChatEntitlementContext (e.g. no defaultChatAgent in product.json).
-			// Set the context key directly as a fallback.
-			ChatEntitlementContextKeys.Setup.hidden.bindTo(this.contextKeyService).set(hidden);
+			// Set the context key directly as a fallback — but a product-level
+			// hide is permanent and must not be cleared by policy-gate updates.
+			ChatEntitlementContextKeys.Setup.hidden.bindTo(this.contextKeyService).set(hidden || this.hiddenByProduct);
 		}
 	}
 
