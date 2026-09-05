@@ -34,7 +34,7 @@
 	"nodejsRepository": "https://nodejs.org",
 	"urlProtocol": "qortex",
 	"trustedExtensionProtocolHandlers": [
-		"saoudrizwan.claude-dev"
+		"qamia.fenneq-studio"
 	],
 	"quality": "stable",
 	"agentsTelemetryAppName": "agents",

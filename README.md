@@ -8,24 +8,13 @@ This repository contains the **Qortex editor shell**.
 
 ## What makes Qortex different
 
-🤖 **FenneQ — the agentic platform at the core.** Qortex is built around the
-FenneQ agent: an autonomous coding agent that plans, edits across files, runs
-commands, and connects to your own knowledge base through the Fenneq MCP server.
-FenneQ is designed to ship bundled as a built-in — the editor *is* the agent,
-not a chatbot bolted on.
-
-⚡ **Model tiers that match the task.** Pick the intelligence level per job:
-
-| Variant | Tier | Best for |
-|---|---|---|
-| **FenneQ Solar** | Frontier | Hard architecture, large refactors |
-| **FenneQ Aurora** | Balanced | Daily driving |
-| **FenneQ Comet** | Fast | Quick edits, instant answers |
-
-💰 **Engineered for efficiency.** The platform is built around aggressive
-**prompt caching**, **codebase retrieval** (send relevant context, not whole
-files), **diff-based edits**, and **smart model routing** — so agentic coding
-stays fast and affordable instead of burning tokens.
+🤖 **FenneQ Studio — the harness, live in the sidebar.** Qortex is built around
+FenneQ, Qamia's optimization harness. FenneQ Studio, the bundled sidebar, drives
+a run end to end: you describe the job, the harness asks for the data it needs,
+puts its questions to you, builds and solves the model, and stops at a human
+gate before anything is promoted. The studio ships as a built-in extension
+([qamia/fenneq-studio](https://github.com/qamia/fenneq-studio)): present on
+first launch, not uninstallable, and Qortex's only agent surface.
 
 🔓 **Open ecosystem.** Extensions come from [Open VSX](https://open-vsx.org),
 the vendor-neutral open registry.
@@ -43,8 +32,12 @@ workflow (Windows, macOS, Linux).
 
 ## Repository structure
 
-This is the editor shell. The wider platform (FenneQ agent, backend, docs)
-lives in the [qamia/qortex](https://github.com/qamia/qortex) monorepo.
+This is the editor shell. FenneQ Studio, the bundled sidebar, lives in
+[qamia/fenneq-studio](https://github.com/qamia/fenneq-studio); the harness and
+its engine in [qamia/Fennec-Agentic-Plateform](https://github.com/qamia/Fennec-Agentic-Plateform);
+the backend proxy and docs in the [qamia/qortex](https://github.com/qamia/qortex)
+monorepo. Packaged builds bundle the studio from a VSIX or a built checkout —
+see [BUILD.md](BUILD.md).
 
 ## Built on open source
 

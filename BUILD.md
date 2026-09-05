@@ -68,6 +68,25 @@ Packaged platform bundles (what CI produces):
 npm run gulp vscode-linux-x64-min    # | vscode-win32-x64-min | vscode-darwin-arm64-min
 ```
 
+### FenneQ Studio (the bundled sidebar)
+
+Packaged builds bundle [FenneQ Studio](https://github.com/qamia/fenneq-studio)
+as a built-in extension (`resources/app/extensions/fenneq-studio`). The shell
+does not compile it: `build/lib/fenneqStudio.ts` (gulp task
+`compile-fenneq-studio-build`, part of every `vscode-*` task) copies a
+ready-made build from the first of
+
+1. `FENNEQ_STUDIO_VSIX` — a `.vsix` made with `npx vsce package --no-dependencies --skip-license` in the studio repo;
+2. `.build/fenneq-studio.vsix` — the same file where CI puts it;
+3. `FENNEQ_STUDIO_DIR` — a built checkout (`npm run build` done, `dist/extension.js` present);
+4. `../fenneq-studio` — the sibling checkout, same rule.
+
+With no source found the build warns and ships without the studio;
+`FENNEQ_REQUIRED=1` (set by CI) turns that into an error. A manifest that is
+not `qamia.fenneq-studio` is refused. CI builds the VSIX in the `studio` job of
+`qortex-build.yml` from the private repo, which needs the `FENNEQ_STUDIO_TOKEN`
+secret (fine-grained PAT, read on qamia/fenneq-studio).
+
 ### After a disk-zero crash
 If a compile dies at 0 GB, native modules can be left half-built (e.g.
 `policy-watcher`, `spdlog`, `windows-registry`) and only surface as errors at

@@ -1,15 +1,16 @@
 # Qortex — cross-platform build, packaging, signing & installers (QAM-490/512/507)
 #
 # Pipeline:
-#   1. `agent`  — build the FenneQ agent (qamia/fenneq-agent) into a VSIX so the
-#                 shell packaging bundles it as a built-in (QAM-493/507). Needs the
-#                 FENNEQ_AGENT_TOKEN secret to read the (private) agent repo.
+#   1. `studio` — build FenneQ Studio (qamia/fenneq-studio, the bundled sidebar)
+#                 into a VSIX so the shell packaging bundles it as a built-in
+#                 (build/lib/fenneqStudio.ts). Needs the FENNEQ_STUDIO_TOKEN
+#                 secret to read the (private) studio repo.
 #   2. `build`  — per-platform: package the app, build native installers, and
 #                 code-sign + (mac) notarize WHEN the signing secrets are present.
 #                 Without secrets it still produces UNSIGNED installers/archives.
 #
 # ── SECRETS (add on this repo: Settings → Secrets and variables → Actions) ──
-#   FENNEQ_AGENT_TOKEN          fine-grained PAT, read on qamia/fenneq-agent
+#   FENNEQ_STUDIO_TOKEN         fine-grained PAT, read on qamia/fenneq-studio
 #   WINDOWS_CERT_PFX_BASE64     Authenticode cert (.pfx), base64        ┐ Windows
 #   WINDOWS_CERT_PASSWORD       .pfx password                           ┘ signing
 #   APPLE_CERT_P12_BASE64       Developer ID Application (.p12), base64  ┐
@@ -47,71 +48,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── 1. Build the FenneQ agent into a VSIX (platform-independent) ──
-  agent:
-    name: Build FenneQ agent VSIX
+  # ── 1. Build FenneQ Studio into a VSIX (platform-independent) ──
+  studio:
+    name: Build FenneQ Studio VSIX
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout fenneq-agent (qortex-main)
+      - name: Checkout fenneq-studio (main)
         uses: actions/checkout@v4
         with:
-          repository: qamia/fenneq-agent
-          ref: qortex-main
-          token: ${{ secrets.FENNEQ_AGENT_TOKEN }}
-          path: agent
+          repository: qamia/fenneq-studio
+          ref: main
+          token: ${{ secrets.FENNEQ_STUDIO_TOKEN }}
+          path: studio
 
-      - name: Setup Node (agent .nvmrc)
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version-file: "agent/.nvmrc"
+          node-version: 22
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          # Pin to the version declared in the agent's root package.json
-          # ("packageManager": "bun@1.3.13"). setup-bun otherwise pulls the
-          # latest (1.3.14), whose monorepo hoisting left workspace deps where
-          # plain `node` couldn't resolve them (ERR_MODULE_NOT_FOUND: chalk).
-          bun-version: "1.3.13"
+      - name: Install
+        working-directory: studio
+        run: npm ci
 
-      - name: Install agent deps
-        working-directory: agent
-        # NOT --frozen-lockfile: the committed bun.lock can lag package.json;
-        # a plain install resolves the full tree (CI checkout is ephemeral).
-        run: bun install
-
-      - name: Build agent (protos + webview + esbuild)
-        working-directory: agent/apps/vscode
-        # apps/vscode is EXCLUDED from the agent's root bun workspaces
-        # ("workspaces": [..., "!apps/vscode", ...]), so the root `bun install`
-        # never installs its deps (chalk, grpc-tools, ts-proto, globby). It must
-        # be installed on its own — that's why every prior fix (bun version,
-        # non-frozen, run-under-bun) failed: the package was simply never installed.
-        # webview-ui is likewise a nested non-workspace package.
-        # Run build scripts under `bun` (resolves the deps reliably vs plain node).
+      - name: Build + test (types from the schema, extension bundle, webview bundle)
+        working-directory: studio
         run: |
-          bun install
-          bun scripts/build-proto.mjs
-          ( cd webview-ui && bun install && bun run build )
-          bun esbuild.mjs --production
+          npm run build
+          npm test
 
-      - name: Package VSIX (skip prepublish — outputs already built)
-        working-directory: agent/apps/vscode
-        run: |
-          # vsce runs vscode:prepublish (= `npm run package`, whose lint/check-types
-          # are heavier + can shell out); neutralize it since dist/ + webview are built.
-          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.scripts['vscode:prepublish']='node --version';fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
-          # vsce may be hoisted to the monorepo-root .bin (bun), so try local then root.
-          VSCE=./node_modules/.bin/vsce
-          [ -x "$VSCE" ] || VSCE=../../node_modules/.bin/vsce
-          [ -x "$VSCE" ] || VSCE="bunx @vscode/vsce"
-          $VSCE package --no-dependencies --skip-license --out fenneq.vsix
+      - name: Package VSIX
+        working-directory: studio
+        # --no-dependencies: everything is bundled by esbuild/Vite and the manifest
+        # declares no runtime dependencies. --skip-license: private, UNLICENSED.
+        run: npx vsce package --no-dependencies --skip-license --out fenneq-studio.vsix
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fenneq-vsix
-          path: agent/apps/vscode/fenneq.vsix
+          name: fenneq-studio-vsix
+          path: studio/fenneq-studio.vsix
           if-no-files-found: error
           retention-days: 14
 
@@ -145,7 +122,7 @@ jobs:
 
   build:
     name: ${{ matrix.label }}
-    needs: [setup, agent]
+    needs: [setup, studio]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
@@ -174,16 +151,16 @@ jobs:
         with:
           python-version: "3.11"
 
-      # Materialize the FenneQ agent VSIX where the gulp build expects it
-      # (.build/fenneq.vsix → extractFenneqVsix → bundled built-in).
-      - name: Download FenneQ agent VSIX
+      # Materialize the FenneQ Studio VSIX where the gulp build expects it
+      # (.build/fenneq-studio.vsix → materializeFenneqStudio → bundled built-in).
+      - name: Download FenneQ Studio VSIX
         uses: actions/download-artifact@v4
         with:
-          name: fenneq-vsix
+          name: fenneq-studio-vsix
           path: .build
-      - name: Place VSIX at .build/fenneq.vsix
+      - name: Place VSIX at .build/fenneq-studio.vsix
         shell: bash
-        run: test -f .build/fenneq.vsix || mv .build/*.vsix .build/fenneq.vsix
+        run: test -f .build/fenneq-studio.vsix || mv .build/*.vsix .build/fenneq-studio.vsix
 
       - name: Linux build deps
         if: runner.os == 'Linux'
@@ -257,6 +234,9 @@ jobs:
           Add-Content $env:GITHUB_PATH $signtool.DirectoryName
 
       - name: Build + package (${{ matrix.gulp }})
+        env:
+          # A missing studio VSIX is a hard error here: never ship Qortex without its only agent.
+          FENNEQ_REQUIRED: "1"
         run: npm run gulp ${{ matrix.gulp }}
 
       # ── Code-sign the app (only when signing secrets are present) ──
