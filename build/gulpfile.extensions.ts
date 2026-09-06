@@ -15,7 +15,7 @@ import { gulp, filter, plumber, sourcemaps } from './lib/gulp/facade.ts';
 import * as path from 'path';
 import * as nodeUtil from 'util';
 import * as ext from './lib/extensions.ts';
-import { extractFenneqVsix } from './lib/fenneq.ts';
+import { materializeFenneqStudio } from './lib/fenneqStudio.ts';
 import { getVersion } from './lib/getVersion.ts';
 import { createReporter } from './lib/reporter.ts';
 import * as task from './lib/gulp/task.ts';
@@ -292,11 +292,12 @@ export const compileCopilotExtensionBuildTask = task.define('compile-copilot-ext
 task.task(compileCopilotExtensionBuildTask);
 
 /**
- * Qortex (QAM-493): materialize the pre-built FenneQ VSIX into .build/extensions/fenneq
- * so packaging bundles FenneQ as a built-in (System) extension. See build/lib/fenneq.ts.
+ * Qortex: materialize FenneQ Studio (a pre-built VSIX or a built checkout) into
+ * .build/extensions/fenneq-studio so packaging bundles it as a built-in (System)
+ * extension. See build/lib/fenneqStudio.ts.
  */
-export const compileFenneqExtensionBuildTask = task.define('compile-fenneq-extension-build', () => extractFenneqVsix());
-task.task(compileFenneqExtensionBuildTask);
+export const compileFenneqStudioBuildTask = task.define('compile-fenneq-studio-build', () => materializeFenneqStudio());
+task.task(compileFenneqStudioBuildTask);
 
 /**
  * Compiles the extensions for the build.
@@ -306,10 +307,10 @@ export const compileAllExtensionsBuildTask = task.define('compile-extensions-bui
 	cleanExtensionsBuildTask,
 	bundleMarketplaceExtensionsBuildTask,
 	task.define('bundle-extensions-build', () => ext.packageAllLocalExtensionsStream(false, false).pipe(gulp.dest('.build'))),
-	// Qortex (QAM-507): bundle the pre-built FenneQ VSIX as a built-in. Runs LAST so the
-	// preceding clean/bundle steps can't wipe .build/extensions/fenneq. Skips with a
-	// warning if .build/fenneq.vsix is absent, so builds without the VSIX still succeed.
-	compileFenneqExtensionBuildTask,
+	// Qortex: bundle FenneQ Studio as a built-in. Runs LAST so the preceding
+	// clean/bundle steps can't wipe .build/extensions/fenneq-studio. Skips with a
+	// warning when no studio VSIX/checkout is found, so builds without it still succeed.
+	compileFenneqStudioBuildTask,
 ));
 task.task(compileAllExtensionsBuildTask);
 
